@@ -580,6 +580,7 @@ export default function DoorReceptionScreen() {
         </View>
 
         <ScrollView
+          style={styles.scrollView}
           contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -1432,7 +1433,11 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    alignItems: 'center',
+    width: '100%',
+  },
+  scrollView: {
+    flex: 1,
+    width: '100%',
   },
   headerBar: {
     width: '100%',

@@ -123,6 +123,7 @@ export default function ConfigScreen() {
         </View>
 
         <ScrollView
+          style={styles.scrollView}
           contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
           showsVerticalScrollIndicator={false}>
 
@@ -296,11 +297,16 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    alignItems: 'center',
+    width: '100%',
+  },
+  scrollView: {
+    flex: 1,
+    width: '100%',
   },
   headerBar: {
     width: '100%',
     maxWidth: MaxContentWidth,
+    alignSelf: 'center',
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.three,
     backgroundColor: '#ffffff',
@@ -322,23 +328,26 @@ const styles = StyleSheet.create({
     color: '#0f172a',
   },
   scrollContent: {
+    width: '100%',
+    maxWidth: MaxContentWidth,
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.four,
-    maxWidth: MaxContentWidth,
-    width: '100%',
-    gap: Spacing.five,
+    gap: Spacing.four,
+    alignSelf: 'center',
   },
 
   /* Tarjeta Hero Evento */
   eventHeroCard: {
+    width: '100%',
     borderRadius: 20,
-    padding: Spacing.five,
+    padding: Spacing.four,
     gap: 12,
     shadowColor: '#e11d48',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 4,
+    overflow: 'hidden',
   },
   heroBadgeRow: {
     flexDirection: 'row',
@@ -346,33 +355,39 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   heroBadgeText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '900',
     color: '#ffffff',
     letterSpacing: 1,
   },
   heroTitle: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '900',
     color: '#ffffff',
+    width: '100%',
   },
   heroInfoGrid: {
     gap: 6,
     marginTop: 4,
+    width: '100%',
   },
   heroInfoItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    width: '100%',
   },
   heroInfoText: {
-    fontSize: 13,
+    flex: 1,
+    flexShrink: 1,
+    fontSize: 12,
     color: '#ffffff',
     fontWeight: '600',
   },
 
   /* Secciones */
   sectionContainer: {
+    width: '100%',
     gap: 10,
   },
   sectionTitle: {
@@ -388,9 +403,11 @@ const styles = StyleSheet.create({
 
   /* Lista de Selección de Eventos */
   eventList: {
+    width: '100%',
     gap: 8,
   },
   eventSelectCard: {
+    width: '100%',
     backgroundColor: '#ffffff',
     borderRadius: 16,
     padding: Spacing.four,
@@ -398,7 +415,7 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
   eventSelectCardActive: {
     borderColor: '#e11d48',
@@ -410,10 +427,11 @@ const styles = StyleSheet.create({
   },
   eventSelectCol: {
     flex: 1,
+    flexShrink: 1,
     gap: 2,
   },
   eventSelectTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '800',
     color: '#1e293b',
   },
@@ -429,6 +447,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
+    alignSelf: 'flex-start',
+    flexShrink: 0,
   },
   activeCheckText: {
     fontSize: 9,
@@ -438,6 +458,7 @@ const styles = StyleSheet.create({
 
   /* Perfil */
   profileCard: {
+    width: '100%',
     backgroundColor: '#ffffff',
     borderRadius: 18,
     padding: Spacing.four,
@@ -453,15 +474,16 @@ const styles = StyleSheet.create({
   },
   profileInfoCol: {
     flex: 1,
+    flexShrink: 1,
     gap: 3,
   },
   profileName: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '900',
     color: '#0f172a',
   },
   profileEmail: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#64748b',
   },
   roleBadge: {
@@ -480,6 +502,7 @@ const styles = StyleSheet.create({
 
   /* Ajustes */
   settingRow: {
+    width: '100%',
     backgroundColor: '#ffffff',
     borderRadius: 14,
     padding: Spacing.four,
@@ -488,11 +511,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
   },
   settingCol: {
     flex: 1,
+    flexShrink: 1,
     gap: 2,
-    marginRight: 10,
+    marginRight: 8,
   },
   settingTitle: {
     fontSize: 14,
@@ -505,6 +530,7 @@ const styles = StyleSheet.create({
   },
 
   logoutBtn: {
+    width: '100%',
     marginTop: 10,
     borderColor: '#fecdd3',
   },
