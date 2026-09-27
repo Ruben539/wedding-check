@@ -71,6 +71,7 @@ export default function DoorReceptionScreen() {
   const [qrInput, setQrInput] = useState<string>('');
   const [scanResult, setScanResult] = useState<{ guest: GuestItem; timestamp: string } | null>(null);
   const [alreadyUsedResult, setAlreadyUsedResult] = useState<{ guest: GuestItem; timestamp?: string } | null>(null);
+  const [confirmToggleGuest, setConfirmToggleGuest] = useState<GuestItem | null>(null);
   const [ticketModalGuest, setTicketModalGuest] = useState<GuestItem | null>(null);
 
   // Filtros y Búsqueda de Recepción en Puerta
@@ -850,7 +851,7 @@ export default function DoorReceptionScreen() {
                           disabled={isUpdating}
                           onPress={(e) => {
                             e.stopPropagation();
-                            toggleCheckIn(guest);
+                            setConfirmToggleGuest(guest);
                           }}
                           style={[
                             styles.checkInBtn,
@@ -1251,6 +1252,106 @@ export default function DoorReceptionScreen() {
                     </ThemedText>
                   </LinearGradient>
                 </Pressable>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal Pop-Up de Confirmación de Cambio de Estado Manual */}
+      <Modal visible={Boolean(confirmToggleGuest)} animationType="fade" transparent statusBarTranslucent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.confirmToggleModalCard}>
+            {/* Header Gradiente dinámico (Ámbar para Revertir, Verde para Ingreso Manual) */}
+            <LinearGradient
+              colors={
+                confirmToggleGuest?.status === 'attended'
+                  ? ['#ea580c', '#c2410c']
+                  : ['#10b981', '#059669']
+              }
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.confirmToggleHeader}>
+              <View style={styles.confirmToggleBadge}>
+                <ThemedText style={styles.confirmToggleBadgeText}>
+                  {confirmToggleGuest?.status === 'attended' ? '⚠️ CONFIRMAR CAMBIO' : '🟢 INGRESO MANUAL'}
+                </ThemedText>
+              </View>
+              <ThemedText style={styles.confirmToggleGuestName} numberOfLines={2}>
+                {confirmToggleGuest?.name}
+              </ThemedText>
+            </LinearGradient>
+
+            {confirmToggleGuest && (
+              <View style={styles.confirmToggleBody}>
+                {confirmToggleGuest.status === 'attended' ? (
+                  <>
+                    <View style={styles.confirmToggleWarningBox}>
+                      <ThemedText style={styles.confirmToggleWarningIcon}>🔄</ThemedText>
+                      <ThemedText style={styles.confirmToggleWarningText}>
+                        Este invitado figura como <ThemedText style={{ fontWeight: '900' }}>INGRESADO</ThemedText> (acreditado a las {formatDisplayTime(confirmToggleGuest.attended_at)} hs).
+                      </ThemedText>
+                    </View>
+
+                    <ThemedText style={styles.confirmToggleQuestionText}>
+                      ¿Deseas revertir su acreditación y volverlo a colocar como pendiente de ingreso?
+                    </ThemedText>
+                  </>
+                ) : (
+                  <>
+                    <View style={styles.confirmToggleDetailsGrid}>
+                      <View style={styles.confirmToggleGridItem}>
+                        <ThemedText style={styles.registeredGridLabel}>🪑 MESA</ThemedText>
+                        <ThemedText style={styles.registeredGridVal}>
+                          {confirmToggleGuest.table_number || 'Sin Mesa'}
+                        </ThemedText>
+                      </View>
+                      <View style={styles.confirmToggleGridItem}>
+                        <ThemedText style={styles.registeredGridLabel}>🎟️ PASES</ThemedText>
+                        <ThemedText style={styles.registeredGridVal}>
+                          {confirmToggleGuest.confirmed_passes || confirmToggleGuest.passes || 1} Persona(s)
+                        </ThemedText>
+                      </View>
+                    </View>
+
+                    <ThemedText style={styles.confirmToggleQuestionText}>
+                      ¿Confirmas el ingreso manual de este invitado a la recepción sin escanear código QR?
+                    </ThemedText>
+                  </>
+                )}
+
+                {/* Botones de Acción */}
+                <View style={styles.confirmToggleButtonsRow}>
+                  <Pressable
+                    onPress={() => setConfirmToggleGuest(null)}
+                    style={styles.confirmToggleCancelBtn}>
+                    <ThemedText style={styles.confirmToggleCancelText}>Cancelar</ThemedText>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => {
+                      const target = confirmToggleGuest;
+                      setConfirmToggleGuest(null);
+                      toggleCheckIn(target);
+                    }}
+                    style={styles.confirmToggleSubmitBtn}>
+                    <LinearGradient
+                      colors={
+                        confirmToggleGuest.status === 'attended'
+                          ? ['#ea580c', '#c2410c']
+                          : ['#059669', '#10b981']
+                      }
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={styles.confirmToggleSubmitGradient}>
+                      <ThemedText style={styles.confirmToggleSubmitText}>
+                        {confirmToggleGuest.status === 'attended'
+                          ? '🔴 Revertir Ingreso'
+                          : '🟢 Registrar Ingreso'}
+                      </ThemedText>
+                    </LinearGradient>
+                  </Pressable>
+                </View>
               </View>
             )}
           </View>
@@ -2585,5 +2686,124 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     overflow: 'hidden',
     marginTop: 4,
+  },
+
+  /* Modal Pop-Up de Confirmación de Cambio Manual */
+  confirmToggleModalCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    overflow: 'hidden',
+    width: '100%',
+    maxWidth: 400,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+  },
+  confirmToggleHeader: {
+    paddingHorizontal: Spacing.five,
+    paddingVertical: Spacing.five,
+    alignItems: 'center',
+    gap: 8,
+  },
+  confirmToggleBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+  },
+  confirmToggleBadgeText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#ffffff',
+    letterSpacing: 1.2,
+  },
+  confirmToggleGuestName: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#ffffff',
+    textAlign: 'center',
+  },
+  confirmToggleBody: {
+    padding: Spacing.five,
+    gap: 16,
+  },
+  confirmToggleWarningBox: {
+    backgroundColor: '#fff7ed',
+    borderColor: '#fed7aa',
+    borderWidth: 1.5,
+    borderRadius: 14,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  confirmToggleWarningIcon: {
+    fontSize: 22,
+  },
+  confirmToggleWarningText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#c2410c',
+    lineHeight: 18,
+  },
+  confirmToggleDetailsGrid: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  confirmToggleGridItem: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+    borderColor: '#e2e8f0',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+    alignItems: 'center',
+  },
+  confirmToggleQuestionText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#334155',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  confirmToggleButtonsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 4,
+  },
+  confirmToggleCancelBtn: {
+    flex: 1,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  confirmToggleCancelText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#475569',
+  },
+  confirmToggleSubmitBtn: {
+    flex: 1.3,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  confirmToggleSubmitGradient: {
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmToggleSubmitText: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#ffffff',
   },
 });
