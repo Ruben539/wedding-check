@@ -1,0 +1,2589 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  StyleSheet,
+  View,
+  ScrollView,
+  Pressable,
+  TextInput,
+  ActivityIndicator,
+  Alert,
+  RefreshControl,
+  Modal,
+  Platform,
+} from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Redirect, router } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+
+import { useAuth } from '@/context/auth-context';
+import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
+import { Button } from '@/components/ui/button';
+import { Spacing, MaxContentWidth } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
+import { APP_URL } from '@/env';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+
+interface GuestItem {
+  id: number | string;
+  name: string;
+  phone: string;
+  passes: number;
+  confirmed_passes?: number;
+  adults?: number;
+  youth?: number;
+  children?: number;
+  table_number?: string | null;
+  status: 'pending' | 'confirmed' | 'attended' | 'declined';
+  dietary_restrictions?: string | null;
+  notes?: string | null;
+  qr_code?: string;
+  attended_at?: string | null;
+}
+
+interface EventItem {
+  id: number;
+  title: string;
+  couple_names?: string;
+  event_date?: string;
+  location?: string;
+}
+
+export default function DoorReceptionScreen() {
+  const { user, logout, isLoading: authLoading } = useAuth();
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
+
+  const [events, setEvents] = useState<EventItem[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
+  const [guests, setGuests] = useState<GuestItem[]>([]);
+  const [loadingData, setLoadingData] = useState<boolean>(false);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+
+  // Modo de vista: 'list' (Lista de Acreditación) vs 'tables' (Plano por Mesas)
+  const [viewMode, setViewMode] = useState<'list' | 'tables'>('list');
+
+  // Modales
+  const [permission, requestPermission] = useCameraPermissions();
+  const [scanned, setScanned] = useState<boolean>(false);
+  const [scannerVisible, setScannerVisible] = useState<boolean>(false);
+  const [torchEnabled, setTorchEnabled] = useState<boolean>(false);
+  const [qrInput, setQrInput] = useState<string>('');
+  const [scanResult, setScanResult] = useState<{ guest: GuestItem; timestamp: string } | null>(null);
+  const [alreadyUsedResult, setAlreadyUsedResult] = useState<{ guest: GuestItem; timestamp?: string } | null>(null);
+  const [ticketModalGuest, setTicketModalGuest] = useState<GuestItem | null>(null);
+
+  // Filtros y Búsqueda de Recepción en Puerta
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'attended' | 'pending'>('all');
+  const [updatingGuestId, setUpdatingGuestId] = useState<number | string | null>(null);
+
+  useEffect(() => {
+    if (user) {
+      loadInitialEvents();
+    }
+  }, [user]);
+
+  const formatDisplayTime = (rawTime?: string | null): string => {
+    if (!rawTime) {
+      const now = new Date();
+      return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    }
+    // Si ya viene en formato corto HH:MM
+    if (/^\d{2}:\d{2}$/.test(rawTime)) {
+      return rawTime;
+    }
+    // Si viene con segundos HH:MM:SS
+    if (/^\d{2}:\d{2}:\d{2}$/.test(rawTime)) {
+      return rawTime.substring(0, 5);
+    }
+    // Si viene en formato ISO o SQL datetime "2026-09-27T15:37:00..." o "2026-09-27 15:37:00"
+    try {
+      const isIso = rawTime.includes('T');
+      const parsedDate = new Date(isIso ? rawTime : (rawTime.replace(' ', 'T') + (rawTime.length <= 19 ? 'Z' : '')));
+      if (!isNaN(parsedDate.getTime())) {
+        const hours = String(parsedDate.getHours()).padStart(2, '0');
+        const minutes = String(parsedDate.getMinutes()).padStart(2, '0');
+        return `${hours}:${minutes}`;
+      }
+    } catch {
+      // fallback
+    }
+    return rawTime;
+  };
+
+  const getTodayIsoDate = () => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const getTodayFormattedLabel = () => {
+    const today = new Date();
+    const months = [
+      'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+    ];
+    return `${today.getDate()} de ${months[today.getMonth()]} de ${today.getFullYear()}`;
+  };
+
+  const loadInitialEvents = async () => {
+    setLoadingData(true);
+    const todayIso = getTodayIsoDate();
+    try {
+      const res = await fetch(`${APP_URL}/event`, {
+        headers: { 'Accept': 'application/json' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const evList: EventItem[] = Array.isArray(data) ? data : data.events || [];
+        setEvents(evList);
+        if (evList.length > 0) {
+          // Seleccionar automáticamente el evento de la fecha de hoy si coincide
+          const todayEv = evList.find((e) => e.event_date === todayIso) || evList[0];
+          setSelectedEventId(todayEv.id);
+          fetchGuestsForEvent(todayEv.id);
+        } else {
+          loadMockData();
+        }
+      } else {
+        loadMockData();
+      }
+    } catch {
+      loadMockData();
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  const fetchGuestsForEvent = async (eventId: number) => {
+    try {
+      const res = await fetch(`${APP_URL}/events/${eventId}/guests`, {
+        headers: { 'Accept': 'application/json' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const list = (data.guests || []).map((g: any) => ({
+          ...g,
+          qr_code: `WC-${String(g.id).padStart(4, '0')}`,
+        }));
+        setGuests(list);
+      }
+    } catch {
+      // mantener datos previos si falla
+    }
+  };
+
+  const loadMockData = () => {
+    const todayIso = getTodayIsoDate();
+    const mockEv: EventItem = {
+      id: 1,
+      title: 'Boda Sofía & Mateo',
+      couple_names: 'Sofía & Mateo',
+      event_date: todayIso,
+      location: 'Quinta Las Rosas - Asunción',
+    };
+    setEvents([mockEv]);
+    setSelectedEventId(1);
+    setGuests([
+      {
+        id: 101,
+        name: 'Carlos Benítez & Sra.',
+        phone: '0981123456',
+        passes: 2,
+        confirmed_passes: 2,
+        adults: 2,
+        table_number: 'Mesa 3',
+        status: 'confirmed',
+        dietary_restrictions: 'Sin TACC (Celíaco)',
+        notes: 'Confirmado a tiempo',
+        qr_code: 'WC-0101',
+      },
+      {
+        id: 102,
+        name: 'Familia González',
+        phone: '0982234567',
+        passes: 4,
+        confirmed_passes: 4,
+        adults: 2,
+        children: 2,
+        table_number: 'Mesa 1',
+        status: 'attended',
+        dietary_restrictions: '1 Intolerancia a Lactosa',
+        notes: 'Familia de la novia',
+        qr_code: 'WC-0102',
+        attended_at: '19:42',
+      },
+      {
+        id: 103,
+        name: 'Dra. María Martínez',
+        phone: '0983345678',
+        passes: 1,
+        confirmed_passes: 1,
+        adults: 1,
+        table_number: 'Mesa Principal',
+        status: 'attended',
+        notes: 'Madrina',
+        qr_code: 'WC-0103',
+        attended_at: '19:15',
+      },
+      {
+        id: 104,
+        name: 'Ing. Rodrigo Rojas & Acompañante',
+        phone: '0984456789',
+        passes: 2,
+        confirmed_passes: 2,
+        adults: 2,
+        table_number: 'Mesa 5',
+        status: 'confirmed',
+        dietary_restrictions: 'Sin Lactosa',
+        notes: 'Confirmado a tiempo',
+        qr_code: 'WC-0104',
+      },
+      {
+        id: 105,
+        name: 'Fernando Villalba',
+        phone: '0985567890',
+        passes: 1,
+        confirmed_passes: 0,
+        adults: 1,
+        table_number: null,
+        status: 'pending',
+        notes: 'No confirmó antes de la fecha límite (Vencido)',
+        qr_code: 'WC-0105',
+      },
+      {
+        id: 106,
+        name: 'Cynthia Fernández',
+        phone: '0986678901',
+        passes: 2,
+        confirmed_passes: 2,
+        adults: 2,
+        table_number: 'Mesa 8',
+        status: 'confirmed',
+        dietary_restrictions: 'Sin Lactosa',
+        notes: 'Invitada Especial · Confirmada',
+        qr_code: 'WC-0248',
+      },
+      {
+        id: 107,
+        name: 'Lucía Méndez',
+        phone: '0988890123',
+        passes: 1,
+        confirmed_passes: 0,
+        status: 'declined',
+        notes: 'Declinó antes del vencimiento',
+        qr_code: 'WC-0107',
+      },
+    ]);
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    if (selectedEventId) {
+      await fetchGuestsForEvent(selectedEventId);
+    } else {
+      await loadInitialEvents();
+    }
+    setRefreshing(false);
+  };
+
+  // Marcar / Alternar Acreditación (Check-in en Puerta)
+  const toggleCheckIn = async (guest: GuestItem) => {
+    const isAttending = guest.status === 'attended';
+    const newStatus = isAttending ? 'confirmed' : 'attended';
+    const now = new Date();
+    const timestamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    setUpdatingGuestId(guest.id);
+
+    setGuests((prev) =>
+      prev.map((g) =>
+        g.id === guest.id
+          ? {
+              ...g,
+              status: newStatus,
+              attended_at: newStatus === 'attended' ? timestamp : null,
+            }
+          : g
+      )
+    );
+
+    try {
+      await fetch(`${APP_URL}/guests/${guest.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({ status: newStatus }),
+      });
+    } catch {
+      // Manejar sin romper flujo de interfaz
+    } finally {
+      setUpdatingGuestId(null);
+    }
+  };
+
+  // Escanear / Validar QR con API Backend
+  const handleScanQR = async (codeToScan?: string) => {
+    const rawQuery = (codeToScan || qrInput).trim();
+    if (!rawQuery) return;
+
+    // Extraer token si se escanea URL completa
+    let cleanToken = rawQuery;
+    if (cleanToken.includes('/confirmar/')) {
+      cleanToken = cleanToken.split('/confirmar/').pop() || cleanToken;
+    }
+
+    // Verificar si el invitado no confirmó antes del vencimiento, declinó o ya ingresó
+    const foundAny = guests.find(
+      (g) =>
+        (g.qr_code && g.qr_code.toUpperCase() === cleanToken.toUpperCase()) ||
+        g.name.toLowerCase().includes(cleanToken.toLowerCase()) ||
+        String(g.id) === cleanToken
+    );
+
+    const now = new Date();
+    const timestamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    if (foundAny && foundAny.status === 'attended') {
+      setAlreadyUsedResult({
+        guest: foundAny,
+        timestamp: foundAny.attended_at || timestamp,
+      });
+      return;
+    }
+
+    if (foundAny && foundAny.status === 'pending') {
+      Alert.alert(
+        '⚠️ NO CONFIRMADO A TIEMPO',
+        `El invitado "${foundAny.name}" no confirmó su asistencia antes de la fecha límite de vencimiento (7 días antes).\n\nNo se encuentra en la lista de acreditación para el ingreso de hoy.`,
+        [{ text: 'Entendido', onPress: () => setScanned(false) }]
+      );
+      return;
+    }
+
+    if (foundAny && foundAny.status === 'declined') {
+      Alert.alert(
+        '🔴 INVITADO DECLINADO',
+        `El invitado "${foundAny.name}" declinó la invitación antes de la fecha de vencimiento.`,
+        [{ text: 'Entendido', onPress: () => setScanned(false) }]
+      );
+      return;
+    }
+
+    try {
+      const res = await fetch(`${APP_URL}/check-in/scan`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({ token: cleanToken }),
+      });
+
+      const json = await res.json();
+
+      if (res.ok && json.success) {
+        // Entrada Válida
+        const updatedGuest = json.guest;
+        setGuests((prev) =>
+          prev.map((g) => (String(g.id) === String(updatedGuest.id) || g.name === updatedGuest.name ? { ...g, status: 'attended', attended_at: timestamp } : g))
+        );
+        setScanResult({
+          guest: { ...updatedGuest, status: 'attended', attended_at: timestamp },
+          timestamp: timestamp,
+        });
+      } else if (res.status === 409 || json.status === 'already_used' || json.already_attended) {
+        // Pase ya utilizado -> Modal emergente
+        const usedGuest = json.guest || foundAny || { id: 0, name: 'Invitado Registrado', phone: '', passes: 1, table_number: 'Sin Mesa', status: 'attended' };
+        setAlreadyUsedResult({
+          guest: usedGuest,
+          timestamp: usedGuest.attended_at || timestamp,
+        });
+      } else if (res.status === 422 || json.status === 'declined') {
+        // Invitado Cancelado
+        Alert.alert(
+          '⚠️ INVITADO CANCELADO',
+          json.message || 'El invitado figura como No Asistirá.',
+          [{ text: 'Aceptar', onPress: () => setScanned(false) }]
+        );
+      } else {
+        // Buscar localmente como fallback
+        if (foundAny) {
+          if (foundAny.status === 'attended') {
+            setAlreadyUsedResult({
+              guest: foundAny,
+              timestamp: foundAny.attended_at || timestamp,
+            });
+          } else {
+            toggleCheckIn(foundAny);
+            setScanResult({
+              guest: { ...foundAny, status: 'attended', attended_at: foundAny.attended_at || timestamp },
+              timestamp: foundAny.attended_at || timestamp,
+            });
+          }
+        } else {
+          Alert.alert(
+            'Código No Encontrado',
+            json.message || `No se encontró ningún invitado registrado con el código '${cleanToken}'.`,
+            [{ text: 'Aceptar', onPress: () => setScanned(false) }]
+          );
+        }
+      }
+    } catch {
+      // Fallback local
+      if (foundAny) {
+        if (foundAny.status === 'attended') {
+          setAlreadyUsedResult({
+            guest: foundAny,
+            timestamp: foundAny.attended_at || timestamp,
+          });
+        } else {
+          toggleCheckIn(foundAny);
+          setScanResult({
+            guest: { ...foundAny, status: 'attended', attended_at: foundAny.attended_at || timestamp },
+            timestamp: foundAny.attended_at || timestamp,
+          });
+        }
+      } else {
+        Alert.alert(
+          'Error de Conexión',
+          `No se encontró ningún invitado registrado con el código '${cleanToken}'.`,
+          [{ text: 'Aceptar', onPress: () => setScanned(false) }]
+        );
+      }
+    }
+  };
+
+  // Lista de invitados que CONFIRMARON antes de la fecha de vencimiento (Filtrado estricto de puerta)
+  const preConfirmedGuests = useMemo(() => {
+    return guests.filter((g) => g.status === 'confirmed' || g.status === 'attended');
+  }, [guests]);
+
+  // Filtrado en tiempo real en la lista de recepción
+  const filteredGuests = useMemo(() => {
+    return preConfirmedGuests.filter((g) => {
+      const matchQuery =
+        g.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (g.table_number && g.table_number.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (g.qr_code && g.qr_code.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        g.phone.includes(searchQuery);
+
+      if (!matchQuery) return false;
+
+      if (filterStatus === 'attended') return g.status === 'attended';
+      if (filterStatus === 'pending') return g.status === 'confirmed';
+      return true;
+    });
+  }, [preConfirmedGuests, searchQuery, filterStatus]);
+
+  // Agrupamiento por Mesas (Exclusivo invitados confirmados)
+  const tableGroups = useMemo(() => {
+    const groups: { [key: string]: GuestItem[] } = {};
+    preConfirmedGuests.forEach((g) => {
+      const tableKey = g.table_number || 'Sin Mesa Asignada';
+      if (!groups[tableKey]) {
+        groups[tableKey] = [];
+      }
+      groups[tableKey].push(g);
+    });
+    return groups;
+  }, [preConfirmedGuests]);
+
+  // Cálculo de Métricas de Puerta en Vivo (Día del Evento - Solo Confirmados)
+  const stats = useMemo(() => {
+    const total = preConfirmedGuests.length;
+    const attended = preConfirmedGuests.filter((g) => g.status === 'attended').length;
+    const pendingEntrance = total - attended;
+
+    const totalPasses = preConfirmedGuests.reduce((acc, g) => acc + (g.confirmed_passes || g.passes || 1), 0);
+    const attendedPasses = preConfirmedGuests
+      .filter((g) => g.status === 'attended')
+      .reduce((acc, g) => acc + (g.confirmed_passes || g.passes || 1), 0);
+    const pendingEntrancePasses = totalPasses - attendedPasses;
+
+    const progressPercent = total > 0 ? Math.round((attended / total) * 100) : 0;
+
+    const lactoseCount = preConfirmedGuests.filter((g) =>
+      g.dietary_restrictions?.toLowerCase().includes('lactosa')
+    ).length;
+    const celiacCount = preConfirmedGuests.filter(
+      (g) =>
+        g.dietary_restrictions?.toLowerCase().includes('tacc') ||
+        g.dietary_restrictions?.toLowerCase().includes('celíac')
+    ).length;
+    const veggieCount = preConfirmedGuests.filter(
+      (g) =>
+        g.dietary_restrictions?.toLowerCase().includes('vegetar') ||
+        g.dietary_restrictions?.toLowerCase().includes('vegan')
+    ).length;
+
+    const totalSpecialCount = lactoseCount + celiacCount + veggieCount;
+    const standardPasses = Math.max(0, totalPasses - totalSpecialCount);
+
+    return {
+      total,
+      attended,
+      pendingEntrance,
+      totalPasses,
+      attendedPasses,
+      pendingEntrancePasses,
+      progressPercent,
+      lactoseCount,
+      celiacCount,
+      veggieCount,
+      totalSpecialCount,
+      standardPasses,
+    };
+  }, [preConfirmedGuests]);
+
+  if (authLoading) {
+    return (
+      <ThemedView style={styles.centerContainer}>
+        <ActivityIndicator size="large" color="#e11d48" />
+      </ThemedView>
+    );
+  }
+
+  if (!user) {
+    return <Redirect href="/login" />;
+  }
+
+  const currentEvent = events.find((e) => e.id === selectedEventId) || events[0];
+
+  return (
+    <ThemedView style={styles.container}>
+      <SafeAreaView style={styles.safeArea}>
+        
+        {/* Header Superior */}
+        <View style={styles.headerBar}>
+          <View style={styles.headerTitleCol}>
+            <View style={styles.todayHeaderBadge}>
+              <ThemedText style={styles.todayHeaderBadgeText}>
+                📅 EVENTO DE HOY · {getTodayFormattedLabel()}
+              </ThemedText>
+            </View>
+            <ThemedText type="subtitle" style={styles.headerTitle}>
+              {currentEvent ? currentEvent.title : 'Recepción de Invitados'}
+            </ThemedText>
+            {currentEvent?.location ? (
+              <ThemedText style={styles.locationText} themeColor="textSecondary">
+                📍 {currentEvent.location}
+              </ThemedText>
+            ) : null}
+          </View>
+        </View>
+
+        <ScrollView
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={['#e11d48']} />
+          }>
+          
+          {/* Botón Principal Adaptable de Escáner QR de Ingreso */}
+          <Pressable onPress={() => setScannerVisible(true)} style={styles.heroQrButton}>
+            <LinearGradient
+              colors={['#FF0055', '#E61E50', '#F97316']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.heroQrGradient}>
+              <ThemedText style={styles.heroQrIcon}>🎟️</ThemedText>
+              <View style={styles.heroQrCol}>
+                <ThemedText style={styles.heroQrTitle}>ESCANEAR CÓDIGO QR</ThemedText>
+                <ThemedText style={styles.heroQrSub}>Validar y acreditar ingreso de invitados</ThemedText>
+              </View>
+              <ThemedText style={styles.heroQrArrow}>➔</ThemedText>
+            </LinearGradient>
+          </Pressable>
+
+          {/* Tarjetas de Métricas de Puerta (SOLO Ingresaron y Faltan por Ingresar) */}
+          <View style={styles.statsRow}>
+            <LinearGradient
+              colors={['#10b981', '#059669']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.statCard}>
+              <ThemedText style={styles.statNumber}>
+                {stats.attended}
+              </ThemedText>
+              <ThemedText style={styles.statLabel}>
+                ✅ INGRESARON
+              </ThemedText>
+              <ThemedText style={styles.statSub}>
+                {stats.attendedPasses} pases dentro
+              </ThemedText>
+            </LinearGradient>
+
+            <View style={styles.statCardSecondary}>
+              <ThemedText style={styles.statNumberAmber}>
+                {stats.pendingEntrance}
+              </ThemedText>
+              <ThemedText style={styles.statLabelDark}>
+                ⏳ FALTAN INGRESAR
+              </ThemedText>
+              <ThemedText style={styles.statSubDark}>
+                {stats.pendingEntrancePasses} pases por llegar
+              </ThemedText>
+            </View>
+
+            <View style={styles.statCardSecondary}>
+              <ThemedText style={styles.statNumberDark}>
+                {stats.total}
+              </ThemedText>
+              <ThemedText style={styles.statLabelDark}>
+                👥 TOTAL INVITADOS
+              </ThemedText>
+              <ThemedText style={styles.statSubDark}>
+                {stats.totalPasses} pases esperados
+              </ThemedText>
+            </View>
+          </View>
+
+          {/* Barra de Progreso de Ingreso del Día del Evento */}
+          <View style={styles.progressCard}>
+            <View style={styles.progressHeaderRow}>
+              <ThemedText style={styles.progressTitle}>
+                ⏱️ {stats.attended} de {stats.total} invitados ya ingresaron al evento ({stats.progressPercent}%)
+              </ThemedText>
+              <ThemedText style={styles.progressSubText}>
+                {stats.pendingEntrance} pendientes por llegar
+              </ThemedText>
+            </View>
+            <View style={styles.progressBarTrack}>
+              <View style={[styles.progressBarFill, { width: `${stats.progressPercent}%` }]} />
+            </View>
+
+            {/* Control de Catering Diferenciado para la Planner y Cocina/Mozos */}
+            <View style={styles.cateringBox}>
+              <View style={styles.cateringHeaderCol}>
+                <ThemedText style={styles.cateringBoxTitle}>🥗 Control de Catering & Menú</ThemedText>
+                <ThemedText style={styles.cateringBoxSub}>
+                  El menú general del evento es estándar ({stats.totalPasses} pases totales confirmados). Las restricciones aplican únicamente al invitado indicado:
+                </ThemedText>
+              </View>
+
+              <View style={styles.cateringBadgesRow}>
+                <View style={styles.cateringBadgeStandard}>
+                  <ThemedText style={styles.cateringBadgeStandardText}>
+                    🍽️ {stats.standardPasses} Menús Estándar
+                  </ThemedText>
+                </View>
+
+                {stats.lactoseCount > 0 && (
+                  <View style={styles.cateringBadgeSpecial}>
+                    <ThemedText style={styles.cateringBadgeSpecialText}>
+                      🥛 {stats.lactoseCount} Sin Lactosa
+                    </ThemedText>
+                  </View>
+                )}
+
+                {stats.celiacCount > 0 && (
+                  <View style={styles.cateringBadgeSpecial}>
+                    <ThemedText style={styles.cateringBadgeSpecialText}>
+                      🌾 {stats.celiacCount} Sin TACC
+                    </ThemedText>
+                  </View>
+                )}
+
+                {stats.veggieCount > 0 && (
+                  <View style={styles.cateringBadgeSpecial}>
+                    <ThemedText style={styles.cateringBadgeSpecialText}>
+                      🌱 {stats.veggieCount} Vegetariano
+                    </ThemedText>
+                  </View>
+                )}
+              </View>
+            </View>
+          </View>
+
+          {/* Conmutador de Vistas Internas: Lista vs Invitados por mesa */}
+          <View style={styles.modeToggleRow}>
+            <Pressable
+              onPress={() => setViewMode('list')}
+              style={[styles.toggleBtn, viewMode === 'list' && styles.toggleBtnActive]}>
+              <ThemedText style={[styles.toggleBtnText, viewMode === 'list' && styles.toggleBtnTextActive]}>
+                📋 Lista de puerta ({filteredGuests.length})
+              </ThemedText>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setViewMode('tables')}
+              style={[styles.toggleBtn, viewMode === 'tables' && styles.toggleBtnActive]}>
+              <ThemedText style={[styles.toggleBtnText, viewMode === 'tables' && styles.toggleBtnTextActive]}>
+                🪑 Invitados por mesa ({Object.keys(tableGroups).length})
+              </ThemedText>
+            </Pressable>
+          </View>
+
+          {viewMode === 'list' ? (
+            <>
+              {/* Búsqueda en Puerta */}
+              <View style={styles.searchSection}>
+                <View style={styles.searchInputWrapper}>
+                  <ThemedText style={styles.searchIcon}>🔍</ThemedText>
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="Buscar por nombre, código QR o mesa..."
+                    placeholderTextColor="#64748b"
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    autoCapitalize="none"
+                  />
+                  {searchQuery.length > 0 && (
+                    <Pressable onPress={() => setSearchQuery('')} style={styles.clearBtn}>
+                      <ThemedText style={styles.clearText}>✕</ThemedText>
+                    </Pressable>
+                  )}
+                </View>
+
+                {/* Filtros Rápidos en Puerta */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterPills}>
+                  <Pressable
+                    onPress={() => setFilterStatus('all')}
+                    style={[styles.pill, filterStatus === 'all' && styles.pillActive]}>
+                    <ThemedText style={[styles.pillText, filterStatus === 'all' && styles.pillTextActive]}>
+                      Todos ({guests.length})
+                    </ThemedText>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => setFilterStatus('attended')}
+                    style={[styles.pill, filterStatus === 'attended' && styles.pillActiveAttended]}>
+                    <ThemedText style={[styles.pillText, filterStatus === 'attended' && styles.pillTextActive]}>
+                      ✅ Ingresaron ({stats.attended})
+                    </ThemedText>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => setFilterStatus('pending')}
+                    style={[styles.pill, filterStatus === 'pending' && styles.pillActive]}>
+                    <ThemedText style={[styles.pillText, filterStatus === 'pending' && styles.pillTextActive]}>
+                      ⏳ Faltan Ingresar ({stats.pendingEntrance})
+                    </ThemedText>
+                  </Pressable>
+                </ScrollView>
+              </View>
+
+              {/* Lista de Invitados en Puerta */}
+              <View style={styles.guestListSection}>
+                <ThemedText style={styles.sectionTitle}>
+                  ACREDITACIÓN EN PUERTA ({filteredGuests.length})
+                </ThemedText>
+
+                {filteredGuests.length === 0 ? (
+                  <View style={styles.emptyBox}>
+                    <ThemedText style={styles.emptyIcon}>🔍</ThemedText>
+                    <ThemedText style={styles.emptyText}>
+                      No se encontraron invitados con el filtro o búsqueda actual.
+                    </ThemedText>
+                  </View>
+                ) : (
+                  filteredGuests.map((guest) => {
+                    const isAttended = guest.status === 'attended';
+                    const isUpdating = updatingGuestId === guest.id;
+
+                    return (
+                      <Pressable
+                        key={guest.id}
+                        onPress={() => setTicketModalGuest(guest)}
+                        style={[
+                          styles.guestCard,
+                          isAttended && styles.guestCardAttended,
+                        ]}>
+                        
+                        <View style={styles.guestInfoCol}>
+                          <View style={styles.guestNameRow}>
+                            <ThemedText style={styles.guestName}>
+                              {guest.name}
+                            </ThemedText>
+                            
+                            {isAttended ? (
+                              <View style={styles.attendedBadge}>
+                                <ThemedText style={styles.attendedBadgeText}>
+                                  ✅ INGRESÓ {guest.attended_at ? `(${formatDisplayTime(guest.attended_at)})` : ''}
+                                </ThemedText>
+                              </View>
+                            ) : (
+                              <View style={styles.confirmedBadge}>
+                                <ThemedText style={styles.confirmedBadgeText}>
+                                  📋 CONFIRMADO
+                                </ThemedText>
+                              </View>
+                            )}
+                          </View>
+
+                          <View style={styles.detailsRow}>
+                            <View style={styles.tableBadgeProminent}>
+                              <ThemedText style={styles.tableTextProminent}>
+                                🪑 {guest.table_number ? (guest.table_number.toLowerCase().includes('mesa') ? guest.table_number : `Mesa: ${guest.table_number}`) : 'Sin Mesa Asignada'}
+                              </ThemedText>
+                            </View>
+
+                            <View style={styles.passesBadgeSubtle}>
+                              <ThemedText style={styles.passesTextSubtle}>
+                                🎟️ {guest.confirmed_passes || guest.passes} pases · {guest.qr_code}
+                              </ThemedText>
+                            </View>
+                          </View>
+
+                          {guest.dietary_restrictions ? (
+                            <View style={styles.dietBox}>
+                              <ThemedText style={styles.dietText}>
+                                🥗 {guest.dietary_restrictions}
+                              </ThemedText>
+                            </View>
+                          ) : null}
+
+                          {guest.notes ? (
+                            <ThemedText style={styles.notesText} themeColor="textSecondary">
+                              📝 {guest.notes}
+                            </ThemedText>
+                          ) : null}
+                        </View>
+
+                        <Pressable
+                          disabled={isUpdating}
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            toggleCheckIn(guest);
+                          }}
+                          style={[
+                            styles.checkInBtn,
+                            isAttended ? styles.checkInBtnActive : styles.checkInBtnPending,
+                          ]}>
+                          {isUpdating ? (
+                            <ActivityIndicator color="#ffffff" size="small" />
+                          ) : (
+                            <ThemedText style={styles.checkInBtnText}>
+                              {isAttended ? '✅ DENTRO' : '🟢 INGRESAR'}
+                            </ThemedText>
+                          )}
+                        </Pressable>
+
+                      </Pressable>
+                    );
+                  })
+                )}
+              </View>
+            </>
+          ) : (
+            /* Vista por Mesas */
+            <View style={styles.tablesContainer}>
+              <ThemedText style={styles.sectionTitle}>
+                INVITADOS POR MESA ({Object.keys(tableGroups).length})
+              </ThemedText>
+
+              {Object.entries(tableGroups).map(([tableName, tableGuests]) => {
+                const attendedInTable = tableGuests.filter((g) => g.status === 'attended').length;
+                const totalInTable = tableGuests.reduce((acc, g) => acc + (g.confirmed_passes || g.passes || 1), 0);
+
+                return (
+                  <View key={tableName} style={styles.tableCardContainer}>
+                    <View style={styles.tableCardHeader}>
+                      <View style={styles.tableTitleCol}>
+                        <ThemedText style={styles.tableCardTitle}>
+                          🪑 {tableName}
+                        </ThemedText>
+                        <ThemedText style={styles.tableCardSub}>
+                          {tableGuests.length} familias/invitados ({totalInTable} personas)
+                        </ThemedText>
+                      </View>
+                      
+                      <View style={styles.tableCountBadge}>
+                        <ThemedText style={styles.tableCountText}>
+                          {attendedInTable} / {tableGuests.length} en mesa
+                        </ThemedText>
+                      </View>
+                    </View>
+
+                    <View style={styles.tableGuestList}>
+                      {tableGuests.map((g) => (
+                        <View key={g.id} style={styles.tableGuestRow}>
+                          <ThemedText style={styles.tableGuestName}>
+                            {g.status === 'attended' ? '🟢' : '⚪'} {g.name}
+                          </ThemedText>
+
+                          <View style={styles.tableGuestDetails}>
+                            {g.dietary_restrictions ? (
+                              <ThemedText style={styles.tableDietText}>
+                                🥗 {g.dietary_restrictions}
+                              </ThemedText>
+                            ) : null}
+                            <ThemedText style={styles.tablePassesText}>
+                              {g.confirmed_passes || g.passes} pases
+                            </ThemedText>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+
+        </ScrollView>
+      </SafeAreaView>
+
+      {/* Modal de Escáner QR Estilo Cámara Nativa de Smartphone */}
+      <Modal visible={scannerVisible} animationType="fade" statusBarTranslucent transparent={false}>
+        <View style={styles.fullScreenCameraContainer}>
+          {/* Cámara a Pantalla Completa */}
+          {!permission ? (
+            <View style={styles.cameraCenterContainer}>
+              <ActivityIndicator size="large" color="#ffffff" />
+              <ThemedText style={{ marginTop: 12, color: '#ffffff', fontWeight: '700' }}>
+                Iniciando cámara...
+              </ThemedText>
+            </View>
+          ) : !permission.granted ? (
+            <View style={styles.cameraCenterContainer}>
+              <ThemedText style={styles.permissionText}>
+                Se requieren permisos para acceder a la cámara y escanear las entradas QR.
+              </ThemedText>
+              <Button title="Conceder Permiso de Cámara" onPress={requestPermission} style={{ marginTop: 16 }} />
+            </View>
+          ) : (
+            <CameraView
+              style={StyleSheet.absoluteFill}
+              facing="back"
+              enableTorch={torchEnabled}
+              barcodeScannerSettings={{
+                barcodeTypes: ['qr'],
+              }}
+              onBarcodeScanned={
+                scanned
+                  ? undefined
+                  : ({ data }) => {
+                      setScanned(true);
+                      handleScanQR(data);
+                    }
+              }
+            />
+          )}
+
+          {/* CAPA SUPERIOR: Interfaz estilo teléfono nativo */}
+          <SafeAreaView style={styles.cameraOverlaySafeArea}>
+            {/* Mensaje Superior y Botón Cerrar */}
+            <View style={styles.cameraTopBar}>
+              <View style={{ width: 40 }} />
+              <ThemedText style={styles.cameraPromptText}>
+                Busque un código QR
+              </ThemedText>
+              <Pressable
+                onPress={() => {
+                  setScannerVisible(false);
+                  setScanResult(null);
+                  setScanned(false);
+                }}
+                style={styles.cameraCloseBtn}>
+                <ThemedText style={styles.cameraCloseBtnText}>✕</ThemedText>
+              </Pressable>
+            </View>
+
+            {/* MARCO CENTRAL: Esquinas Blancas de Encuadre */}
+            <View style={styles.cameraReticleContainer}>
+              <View style={styles.cameraReticleBox}>
+                <View style={[styles.cornerBracket, styles.cornerTL]} />
+                <View style={[styles.cornerBracket, styles.cornerTR]} />
+                <View style={[styles.cornerBracket, styles.cornerBL]} />
+                <View style={[styles.cornerBracket, styles.cornerBR]} />
+              </View>
+            </View>
+
+            {/* PANEL INFERIOR: CONTROLES DE LINTERNA Y ACCESOS RÁPIDOS */}
+            <View style={styles.cameraBottomPanel}>
+              <View style={styles.cameraActionButtonsRow}>
+                {/* Botón Flotante Linterna / Flash */}
+                <Pressable
+                  onPress={() => setTorchEnabled((prev) => !prev)}
+                  style={[styles.floatingCircleBtn, torchEnabled && styles.floatingCircleBtnActive]}>
+                  <ThemedText style={styles.floatingBtnIcon}>{torchEnabled ? '🔦' : '💡'}</ThemedText>
+                </Pressable>
+
+                {/* Chips de prueba para desarrollo/web */}
+                <View style={styles.quickScanRowInline}>
+                  <Pressable
+                    onPress={() => {
+                      setScanned(true);
+                      handleScanQR('WC-0248');
+                    }}
+                    style={styles.quickScanChipGlass}>
+                    <ThemedText style={styles.quickScanChipGlassText}>Cynthia</ThemedText>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      setScanned(true);
+                      handleScanQR('WC-0101');
+                    }}
+                    style={styles.quickScanChipGlass}>
+                    <ThemedText style={styles.quickScanChipGlassText}>Carlos</ThemedText>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      setScanned(true);
+                      handleScanQR('WC-0105');
+                    }}
+                    style={styles.quickScanChipGlassWarning}>
+                    <ThemedText style={styles.quickScanChipGlassWarningText}>No Confirmó</ThemedText>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          </SafeAreaView>
+        </View>
+      </Modal>
+
+      {/* Modal Pop-Up de Resultado: INVITADO REGISTRADO */}
+      <Modal visible={Boolean(scanResult)} animationType="fade" transparent statusBarTranslucent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.registeredModalCard}>
+            {/* Header Verde Gradiente */}
+            <LinearGradient
+              colors={['#10b981', '#059669']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.registeredHeader}>
+              <View style={styles.registeredBadge}>
+                <ThemedText style={styles.registeredBadgeText}>✅ INVITADO REGISTRADO</ThemedText>
+              </View>
+              <ThemedText style={styles.registeredGuestName} numberOfLines={2}>
+                {scanResult?.guest.name}
+              </ThemedText>
+              {scanResult?.guest.qr_code ? (
+                <ThemedText style={styles.registeredQrCode}>
+                  Código: {scanResult.guest.qr_code}
+                </ThemedText>
+              ) : null}
+            </LinearGradient>
+
+            {scanResult && (
+              <View style={styles.registeredBody}>
+                {/* Rejilla: Mesa Asignada y Pases */}
+                <View style={styles.registeredGridRow}>
+                  <View style={styles.registeredGridItemProminent}>
+                    <ThemedText style={styles.registeredGridLabel}>🪑 MESA ASIGNADA</ThemedText>
+                    <ThemedText style={styles.registeredGridValProminent}>
+                      {scanResult.guest.table_number
+                        ? (scanResult.guest.table_number.toLowerCase().includes('mesa')
+                            ? scanResult.guest.table_number
+                            : `Mesa ${scanResult.guest.table_number}`)
+                        : 'Sin Mesa Asignada'}
+                    </ThemedText>
+                  </View>
+
+                  <View style={styles.registeredGridItem}>
+                    <ThemedText style={styles.registeredGridLabel}>🎟️ PASES</ThemedText>
+                    <ThemedText style={styles.registeredGridVal}>
+                      {scanResult.guest.confirmed_passes || scanResult.guest.passes || 1} Persona(s)
+                    </ThemedText>
+                  </View>
+                </View>
+
+                {/* Restricción Alimentaria */}
+                <View
+                  style={[
+                    styles.registeredDietBox,
+                    scanResult.guest.dietary_restrictions
+                      ? styles.registeredDietBoxActive
+                      : styles.registeredDietBoxStandard,
+                  ]}>
+                  <View style={styles.registeredDietHeaderRow}>
+                    <ThemedText style={styles.registeredDietIcon}>
+                      {scanResult.guest.dietary_restrictions ? '⚠️' : '🥗'}
+                    </ThemedText>
+                    <ThemedText style={styles.registeredDietTitle}>
+                      Restricción Alimenticia:
+                    </ThemedText>
+                  </View>
+                  <ThemedText
+                    style={[
+                      styles.registeredDietVal,
+                      scanResult.guest.dietary_restrictions
+                        ? styles.registeredDietValActive
+                        : styles.registeredDietValStandard,
+                    ]}>
+                    {scanResult.guest.dietary_restrictions
+                      ? scanResult.guest.dietary_restrictions
+                      : 'Ninguna (Menú Estándar Boda)'}
+                  </ThemedText>
+                </View>
+
+                {/* Timestamp de Ingreso */}
+                <View style={styles.registeredTimeBox}>
+                  <ThemedText style={styles.registeredTimeText}>
+                    🕘 Acreditado e ingresado a las {formatDisplayTime(scanResult.timestamp)} hs
+                  </ThemedText>
+                </View>
+
+                {/* Botón de Escanear Siguiente */}
+                <Pressable
+                  onPress={() => {
+                    setScanResult(null);
+                    setScanned(false);
+                  }}
+                  style={styles.registeredNextBtn}>
+                  <LinearGradient
+                    colors={['#059669', '#10b981']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.registeredNextBtnGradient}>
+                    <ThemedText style={styles.registeredNextBtnText}>
+                      📷 ESCANEAR SIGUIENTE QR
+                    </ThemedText>
+                  </LinearGradient>
+                </Pressable>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal Pop-Up de Resultado: PASE YA UTILIZADO */}
+      <Modal visible={Boolean(alreadyUsedResult)} animationType="fade" transparent statusBarTranslucent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.alreadyUsedModalCard}>
+            {/* Header Naranja/Ámbar Gradiente de Advertencia */}
+            <LinearGradient
+              colors={['#ea580c', '#c2410c']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.alreadyUsedHeader}>
+              <View style={styles.alreadyUsedBadge}>
+                <ThemedText style={styles.alreadyUsedBadgeText}>⚠️ PASE YA UTILIZADO</ThemedText>
+              </View>
+              <ThemedText style={styles.alreadyUsedGuestName} numberOfLines={2}>
+                {alreadyUsedResult?.guest.name}
+              </ThemedText>
+              {alreadyUsedResult?.guest.qr_code ? (
+                <ThemedText style={styles.alreadyUsedQrCode}>
+                  Código: {alreadyUsedResult.guest.qr_code}
+                </ThemedText>
+              ) : null}
+            </LinearGradient>
+
+            {alreadyUsedResult && (
+              <View style={styles.alreadyUsedBody}>
+                {/* Banner de Alerta Destacado */}
+                <View style={styles.alreadyUsedWarningBanner}>
+                  <ThemedText style={styles.alreadyUsedWarningIcon}>⛔</ThemedText>
+                  <ThemedText style={styles.alreadyUsedWarningText}>
+                    Este pase ya fue escaneado e ingresado previamente en la recepción. El invitado ya se encuentra en el evento.
+                  </ThemedText>
+                </View>
+
+                {/* Rejilla: Mesa Asignada y Pases */}
+                <View style={styles.registeredGridRow}>
+                  <View style={styles.alreadyUsedGridItemProminent}>
+                    <ThemedText style={styles.registeredGridLabel}>🪑 MESA ASIGNADA</ThemedText>
+                    <ThemedText style={styles.alreadyUsedGridValProminent}>
+                      {alreadyUsedResult.guest.table_number
+                        ? (alreadyUsedResult.guest.table_number.toLowerCase().includes('mesa')
+                            ? alreadyUsedResult.guest.table_number
+                            : `Mesa ${alreadyUsedResult.guest.table_number}`)
+                        : 'Sin Mesa Asignada'}
+                    </ThemedText>
+                  </View>
+
+                  <View style={styles.registeredGridItem}>
+                    <ThemedText style={styles.registeredGridLabel}>🎟️ PASES</ThemedText>
+                    <ThemedText style={styles.registeredGridVal}>
+                      {alreadyUsedResult.guest.confirmed_passes || alreadyUsedResult.guest.passes || 1} Persona(s)
+                    </ThemedText>
+                  </View>
+                </View>
+
+                {/* Restricción Alimentaria */}
+                <View
+                  style={[
+                    styles.registeredDietBox,
+                    alreadyUsedResult.guest.dietary_restrictions
+                      ? styles.registeredDietBoxActive
+                      : styles.registeredDietBoxStandard,
+                  ]}>
+                  <View style={styles.registeredDietHeaderRow}>
+                    <ThemedText style={styles.registeredDietIcon}>
+                      {alreadyUsedResult.guest.dietary_restrictions ? '⚠️' : '🥗'}
+                    </ThemedText>
+                    <ThemedText style={styles.registeredDietTitle}>
+                      Restricción Alimenticia:
+                    </ThemedText>
+                  </View>
+                  <ThemedText
+                    style={[
+                      styles.registeredDietVal,
+                      alreadyUsedResult.guest.dietary_restrictions
+                        ? styles.registeredDietValActive
+                        : styles.registeredDietValStandard,
+                    ]}>
+                    {alreadyUsedResult.guest.dietary_restrictions
+                      ? alreadyUsedResult.guest.dietary_restrictions
+                      : 'Ninguna (Menú Estándar Boda)'}
+                  </ThemedText>
+                </View>
+
+                {/* Timestamp de Ingreso */}
+                <View style={styles.alreadyUsedTimeBox}>
+                  <ThemedText style={styles.alreadyUsedTimeText}>
+                    🕘 Ingresó previamente a las {formatDisplayTime(alreadyUsedResult.guest.attended_at || alreadyUsedResult.timestamp)} hs
+                  </ThemedText>
+                </View>
+
+                {/* Botón de Escanear Siguiente */}
+                <Pressable
+                  onPress={() => {
+                    setAlreadyUsedResult(null);
+                    setScanned(false);
+                  }}
+                  style={styles.alreadyUsedNextBtn}>
+                  <LinearGradient
+                    colors={['#ea580c', '#c2410c']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.registeredNextBtnGradient}>
+                    <ThemedText style={styles.registeredNextBtnText}>
+                      📷 ESCANEAR SIGUIENTE QR
+                    </ThemedText>
+                  </LinearGradient>
+                </Pressable>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal de Ticket / Pase Digital del Invitado */}
+      <Modal visible={Boolean(ticketModalGuest)} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.ticketCardModal}>
+            <LinearGradient
+              colors={['#FF0055', '#E61E50', '#F97316']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.ticketHeader}>
+              <ThemedText style={styles.ticketBadgeIcon}>💍 WEDDING CHECK</ThemedText>
+              <ThemedText style={styles.ticketEventTitle}>{currentEvent ? currentEvent.title : 'Boda'}</ThemedText>
+            </LinearGradient>
+
+            {ticketModalGuest && (
+              <View style={styles.ticketBody}>
+                <ThemedText style={styles.ticketGuestName}>{ticketModalGuest.name}</ThemedText>
+                <ThemedText style={styles.ticketQrBadge}>{ticketModalGuest.qr_code}</ThemedText>
+
+                <View style={styles.ticketGrid}>
+                  <View style={styles.ticketGridItem}>
+                    <ThemedText style={styles.ticketGridLabel}>🪑 MESA ASSIGNADA</ThemedText>
+                    <ThemedText style={styles.ticketGridValProminent}>
+                      {ticketModalGuest.table_number || 'Sin Mesa'}
+                    </ThemedText>
+                  </View>
+
+                  <View style={styles.ticketGridItem}>
+                    <ThemedText style={styles.ticketGridLabel}>🎟️ PASES</ThemedText>
+                    <ThemedText style={styles.ticketGridVal}>
+                      {ticketModalGuest.confirmed_passes || ticketModalGuest.passes} Personas
+                    </ThemedText>
+                  </View>
+                </View>
+
+                {ticketModalGuest.dietary_restrictions ? (
+                  <View style={styles.ticketDietBox}>
+                    <ThemedText style={styles.ticketDietLabel}>🥛 Preferencia Alimentaria:</ThemedText>
+                    <ThemedText style={styles.ticketDietVal}>{ticketModalGuest.dietary_restrictions}</ThemedText>
+                  </View>
+                ) : null}
+
+                <View style={styles.ticketStatusBox}>
+                  <ThemedText style={styles.ticketStatusText}>
+                    Estado: {ticketModalGuest.status === 'attended' ? '✅ INGRESÓ AL EVENTO' : '📋 ASISTENCIA CONFIRMADA'}
+                  </ThemedText>
+                </View>
+              </View>
+            )}
+
+            <Button
+              title="Cerrar Pase"
+              onPress={() => setTicketModalGuest(null)}
+              style={styles.ticketCloseBtn}
+            />
+          </View>
+        </View>
+      </Modal>
+
+    </ThemedView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  safeArea: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  headerBar: {
+    width: '100%',
+    maxWidth: MaxContentWidth,
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.three,
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  headerTitleCol: {
+    flex: 1,
+    minWidth: 160,
+    gap: 2,
+  },
+  todayHeaderBadge: {
+    backgroundColor: '#fff1f2',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#fecdd3',
+  },
+  todayHeaderBadgeText: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#e11d48',
+    letterSpacing: 0.8,
+  },
+  headerSubtitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#e11d48',
+    letterSpacing: 1.2,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#0f172a',
+  },
+  locationText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  logoutBadge: {
+    backgroundColor: '#fff1f2',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fecdd3',
+  },
+  logoutText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#e11d48',
+  },
+
+  scrollContent: {
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.four,
+    maxWidth: MaxContentWidth,
+    width: '100%',
+    gap: Spacing.four,
+  },
+
+  /* Header Actions */
+  headerActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+  },
+  qrScanBadge: {
+    backgroundColor: '#e11d48',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    shadowColor: '#e11d48',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  qrScanText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#ffffff',
+  },
+
+  /* Hero QR Button */
+  heroQrButton: {
+    width: '100%',
+    borderRadius: 18,
+    overflow: 'hidden',
+    shadowColor: '#e11d48',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  heroQrGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.four,
+    paddingVertical: 14,
+    gap: 12,
+  },
+  heroQrIcon: {
+    fontSize: 26,
+  },
+  heroQrCol: {
+    flex: 1,
+    gap: 2,
+  },
+  heroQrTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#ffffff',
+    letterSpacing: 0.5,
+  },
+  heroQrSub: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.9)',
+  },
+  heroQrArrow: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#ffffff',
+  },
+
+  /* Métricas de Recepción */
+  statsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  statCard: {
+    flex: 1.2,
+    padding: Spacing.three,
+    borderRadius: 16,
+    justifyContent: 'center',
+    shadowColor: '#10b981',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  statNumber: {
+    color: '#ffffff',
+    fontSize: 26,
+    fontWeight: '900',
+  },
+  statLabel: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  statSub: {
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  statCardSecondary: {
+    flex: 1,
+    padding: Spacing.three,
+    borderRadius: 16,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    justifyContent: 'center',
+  },
+  statNumberDark: {
+    color: '#0f172a',
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  statNumberAmber: {
+    color: '#d97706',
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  statLabelDark: {
+    color: '#64748b',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  statSubDark: {
+    color: '#94a3b8',
+    fontSize: 10,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+
+  /* Barra de Progreso y Catering */
+  progressCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    padding: Spacing.four,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 10,
+  },
+  progressHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  progressTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  progressSubText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  progressBarTrack: {
+    height: 12,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 6,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#10b981',
+    borderRadius: 6,
+  },
+  cateringBox: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 8,
+    marginTop: 4,
+  },
+  cateringHeaderCol: {
+    gap: 2,
+  },
+  cateringBoxTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#0f172a',
+  },
+  cateringBoxSub: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+  cateringBadgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  cateringBadgeStandard: {
+    backgroundColor: '#f1f5f9',
+    borderColor: '#cbd5e1',
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  cateringBadgeStandardText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#334155',
+  },
+  cateringBadgeSpecial: {
+    backgroundColor: '#fff7ed',
+    borderColor: '#ffedd5',
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  cateringBadgeSpecialText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#c2410c',
+  },
+
+  /* Toggle de Vistas Internas */
+  modeToggleRow: {
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: '#e2e8f0',
+    padding: 4,
+    borderRadius: 14,
+  },
+  toggleBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  toggleBtnActive: {
+    backgroundColor: '#ffffff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  toggleBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  toggleBtnTextActive: {
+    color: '#0f172a',
+    fontWeight: '900',
+  },
+
+  /* Búsqueda y Filtros */
+  searchSection: {
+    gap: 12,
+  },
+  searchInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    paddingHorizontal: 14,
+    height: 50,
+  },
+  searchIcon: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#000000',
+    fontWeight: '600',
+  },
+  clearBtn: {
+    padding: 4,
+  },
+  clearText: {
+    color: '#94a3b8',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  filterPills: {
+    gap: 8,
+  },
+  pill: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  pillActive: {
+    backgroundColor: '#0f172a',
+    borderColor: '#0f172a',
+  },
+  pillActiveAttended: {
+    backgroundColor: '#10b981',
+    borderColor: '#10b981',
+  },
+  pillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  pillTextActive: {
+    color: '#ffffff',
+  },
+
+  /* Lista de Invitados */
+  guestListSection: {
+    gap: 12,
+  },
+  sectionTitle: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#64748b',
+    letterSpacing: 1,
+  },
+  guestCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    padding: Spacing.four,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  guestCardAttended: {
+    borderColor: '#10b981',
+    backgroundColor: '#f0fdf4',
+  },
+  guestInfoCol: {
+    flex: 1,
+    gap: 6,
+  },
+  guestNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  guestName: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#0f172a',
+  },
+  attendedBadge: {
+    backgroundColor: '#d1fae5',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  attendedBadgeText: {
+    color: '#047857',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  confirmedBadge: {
+    backgroundColor: '#e0f2fe',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  confirmedBadgeText: {
+    color: '#0369a1',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  detailsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  tableBadgeProminent: {
+    backgroundColor: '#0f172a',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  tableTextProminent: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#ffffff',
+  },
+  passesBadgeSubtle: {
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  passesTextSubtle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  dietBox: {
+    backgroundColor: '#fef3c7',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+  },
+  dietText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#92400e',
+  },
+  notesText: {
+    fontSize: 12,
+    fontStyle: 'italic',
+  },
+  checkInBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 100,
+  },
+  checkInBtnPending: {
+    backgroundColor: '#e11d48',
+  },
+  checkInBtnActive: {
+    backgroundColor: '#10b981',
+  },
+  checkInBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  emptyBox: {
+    padding: Spacing.five,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    alignItems: 'center',
+    gap: 8,
+  },
+  emptyIcon: {
+    fontSize: 32,
+  },
+  emptyText: {
+    color: '#64748b',
+    fontSize: 13,
+    textAlign: 'center',
+  },
+
+  /* Vista por Mesas */
+  tablesContainer: {
+    gap: 14,
+  },
+  tableCardContainer: {
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    padding: Spacing.four,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    gap: 12,
+  },
+  tableCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    paddingBottom: 10,
+  },
+  tableTitleCol: {
+    gap: 2,
+  },
+  tableCardTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0f172a',
+  },
+  tableCardSub: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  tableCountBadge: {
+    backgroundColor: '#e0f2fe',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  tableCountText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0284c7',
+  },
+  tableGuestList: {
+    gap: 8,
+  },
+  tableGuestRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f8fafc',
+  },
+  tableGuestName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  tableGuestDetails: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  tableDietText: {
+    fontSize: 11,
+    color: '#d97706',
+    fontWeight: '700',
+    backgroundColor: '#fef3c7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  tablePassesText: {
+    fontSize: 12,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+
+  /* Modales */
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.four,
+  },
+  modalContent: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: Spacing.five,
+    width: '100%',
+    maxWidth: 440,
+    gap: 14,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#0f172a',
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#64748b',
+  },
+  modalInputRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  modalInput: {
+    flex: 1,
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 48,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  modalValidateBtn: {
+    height: 48,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+  },
+  quickScanLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748b',
+    marginTop: 4,
+  },
+  quickScanRow: {
+    gap: 6,
+  },
+  quickScanChip: {
+    backgroundColor: '#f1f5f9',
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  quickScanChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#e11d48',
+  },
+  quickScanChipWarning: {
+    backgroundColor: '#fff7ed',
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+  },
+  quickScanChipWarningText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#c2410c',
+  },
+  scanSuccessResultCard: {
+    padding: Spacing.four,
+    borderRadius: 16,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+  },
+  successBadgeTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#047857',
+    letterSpacing: 0.5,
+  },
+  successGuestName: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#064e3b',
+  },
+  successDetailRow: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  successDetailText: {
+    fontSize: 13,
+    color: '#065f46',
+  },
+  successDietText: {
+    fontSize: 12,
+    color: '#b45309',
+    fontWeight: '700',
+  },
+  timestampText: {
+    fontSize: 11,
+    color: '#047857',
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  modalCloseBtn: {
+    marginTop: 6,
+  },
+
+  /* Ticket Digital */
+  ticketCardModal: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    overflow: 'hidden',
+    width: '100%',
+    maxWidth: 380,
+  },
+  ticketHeader: {
+    padding: Spacing.five,
+    alignItems: 'center',
+    gap: 4,
+  },
+  ticketBadgeIcon: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#ffffff',
+    letterSpacing: 1.5,
+  },
+  ticketEventTitle: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#ffffff',
+  },
+  ticketBody: {
+    padding: Spacing.five,
+    alignItems: 'center',
+    gap: 14,
+  },
+  ticketGuestName: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#0f172a',
+    textAlign: 'center',
+  },
+  ticketQrBadge: {
+    backgroundColor: '#f1f5f9',
+    color: '#0f172a',
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 2,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  ticketGrid: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 12,
+  },
+  ticketGridItem: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+    borderRadius: 14,
+    padding: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  ticketGridLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#64748b',
+    letterSpacing: 0.5,
+  },
+  ticketGridValProminent: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#e11d48',
+    marginTop: 4,
+  },
+  ticketGridVal: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginTop: 4,
+  },
+  ticketDietBox: {
+    backgroundColor: '#fff7ed',
+    borderColor: '#ffedd5',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    width: '100%',
+  },
+  ticketDietLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#c2410c',
+  },
+  ticketDietVal: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#9a3412',
+    marginTop: 2,
+  },
+  ticketStatusBox: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#bbf7d0',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+    width: '100%',
+    alignItems: 'center',
+  },
+  ticketStatusText: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#15803d',
+  },
+  ticketCloseBtn: {
+    margin: Spacing.four,
+    marginTop: 0,
+  },
+  fullScreenCameraContainer: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  cameraOverlaySafeArea: {
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  cameraTopBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? 24 : 8,
+  },
+  cameraPromptText: {
+    color: '#ffffff',
+    fontSize: 17,
+    fontWeight: '700',
+    textAlign: 'center',
+    letterSpacing: 0.2,
+  },
+  cameraCloseBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  cameraCloseBtnText: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  cameraReticleContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cameraReticleBox: {
+    width: 250,
+    height: 250,
+    position: 'relative',
+  },
+  cornerBracket: {
+    position: 'absolute',
+    width: 38,
+    height: 38,
+    borderColor: '#ffffff',
+  },
+  cornerTL: {
+    top: 0,
+    left: 0,
+    borderTopWidth: 4,
+    borderLeftWidth: 4,
+    borderTopLeftRadius: 18,
+  },
+  cornerTR: {
+    top: 0,
+    right: 0,
+    borderTopWidth: 4,
+    borderRightWidth: 4,
+    borderTopRightRadius: 18,
+  },
+  cornerBL: {
+    bottom: 0,
+    left: 0,
+    borderBottomWidth: 4,
+    borderLeftWidth: 4,
+    borderBottomLeftRadius: 18,
+  },
+  cornerBR: {
+    bottom: 0,
+    right: 0,
+    borderBottomWidth: 4,
+    borderRightWidth: 4,
+    borderBottomRightRadius: 18,
+  },
+  cameraBottomPanel: {
+    paddingHorizontal: 20,
+    paddingBottom: 24,
+  },
+  cameraActionButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  floatingCircleBtn: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  floatingCircleBtnActive: {
+    backgroundColor: 'rgba(225, 29, 72, 0.8)',
+    borderColor: '#e11d48',
+  },
+  floatingBtnIcon: {
+    fontSize: 22,
+  },
+  quickScanRowInline: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  quickScanChipGlass: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  quickScanChipGlassText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  quickScanChipGlassWarning: {
+    backgroundColor: 'rgba(234, 88, 12, 0.4)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(251, 146, 60, 0.6)',
+  },
+  quickScanChipGlassWarningText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#ffedd5',
+  },
+  cameraCenterContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#0f172a',
+  },
+  permissionText: {
+    fontSize: 12,
+    textAlign: 'center',
+    color: '#cbd5e1',
+    fontWeight: '600',
+  },
+
+  /* Modal Pop-Up de Resultado: Invitado Registrado */
+  registeredModalCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    overflow: 'hidden',
+    width: '100%',
+    maxWidth: 400,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+  },
+  registeredHeader: {
+    paddingHorizontal: Spacing.five,
+    paddingVertical: Spacing.five,
+    alignItems: 'center',
+    gap: 8,
+  },
+  registeredBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+  },
+  registeredBadgeText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#ffffff',
+    letterSpacing: 1.2,
+  },
+  registeredGuestName: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#ffffff',
+    textAlign: 'center',
+  },
+  registeredQrCode: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#d1fae5',
+  },
+  registeredBody: {
+    padding: Spacing.five,
+    gap: 14,
+  },
+  registeredGridRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  registeredGridItemProminent: {
+    flex: 1.2,
+    backgroundColor: '#ecfdf5',
+    borderColor: '#a7f3d0',
+    borderWidth: 1.5,
+    borderRadius: 14,
+    padding: 12,
+    alignItems: 'center',
+  },
+  registeredGridItem: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+    borderColor: '#e2e8f0',
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    alignItems: 'center',
+  },
+  registeredGridLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748b',
+    letterSpacing: 0.5,
+  },
+  registeredGridValProminent: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: '#047857',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  registeredGridVal: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  registeredDietBox: {
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1.5,
+    gap: 4,
+  },
+  registeredDietBoxActive: {
+    backgroundColor: '#fff7ed',
+    borderColor: '#fdba74',
+  },
+  registeredDietBoxStandard: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#bbf7d0',
+  },
+  registeredDietHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  registeredDietIcon: {
+    fontSize: 16,
+  },
+  registeredDietTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#334155',
+  },
+  registeredDietVal: {
+    fontSize: 14,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  registeredDietValActive: {
+    color: '#c2410c',
+  },
+  registeredDietValStandard: {
+    color: '#15803d',
+  },
+  registeredTimeBox: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    padding: 10,
+    alignItems: 'center',
+  },
+  registeredTimeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  registeredNextBtn: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginTop: 4,
+  },
+  registeredNextBtnGradient: {
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  registeredNextBtnText: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#ffffff',
+    letterSpacing: 0.8,
+  },
+
+  /* Modal Pop-Up de Resultado: Pase Ya Utilizado */
+  alreadyUsedModalCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    overflow: 'hidden',
+    width: '100%',
+    maxWidth: 400,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+  },
+  alreadyUsedHeader: {
+    paddingHorizontal: Spacing.five,
+    paddingVertical: Spacing.five,
+    alignItems: 'center',
+    gap: 8,
+  },
+  alreadyUsedBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+  },
+  alreadyUsedBadgeText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#ffffff',
+    letterSpacing: 1.2,
+  },
+  alreadyUsedGuestName: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#ffffff',
+    textAlign: 'center',
+  },
+  alreadyUsedQrCode: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffedd5',
+  },
+  alreadyUsedBody: {
+    padding: Spacing.five,
+    gap: 14,
+  },
+  alreadyUsedWarningBanner: {
+    backgroundColor: '#fff7ed',
+    borderColor: '#fed7aa',
+    borderWidth: 1.5,
+    borderRadius: 14,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  alreadyUsedWarningIcon: {
+    fontSize: 20,
+  },
+  alreadyUsedWarningText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#c2410c',
+    lineHeight: 17,
+  },
+  alreadyUsedGridItemProminent: {
+    flex: 1.2,
+    backgroundColor: '#fff7ed',
+    borderColor: '#ffedd5',
+    borderWidth: 1.5,
+    borderRadius: 14,
+    padding: 12,
+    alignItems: 'center',
+  },
+  alreadyUsedGridValProminent: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: '#ea580c',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  alreadyUsedTimeBox: {
+    backgroundColor: '#fff7ed',
+    borderRadius: 10,
+    padding: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ffedd5',
+  },
+  alreadyUsedTimeText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#c2410c',
+  },
+  alreadyUsedNextBtn: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginTop: 4,
+  },
+});
