@@ -10,13 +10,17 @@ import {
   RefreshControl,
   Modal,
   Platform,
+  Linking,
+  Switch,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Redirect, router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 
 import { useAuth, getAuthHeaders } from '@/context/auth-context';
 import { useEvent, EventItem } from '@/context/event-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui/button';
@@ -40,6 +44,8 @@ interface GuestItem {
   notes?: string | null;
   qr_code?: string;
   attended_at?: string | null;
+  is_vip?: boolean;
+  vip_label?: string;
 }
 
 export default function DoorReceptionScreen() {
@@ -65,6 +71,20 @@ export default function DoorReceptionScreen() {
   const [alreadyUsedResult, setAlreadyUsedResult] = useState<{ guest: GuestItem; timestamp?: string } | null>(null);
   const [confirmToggleGuest, setConfirmToggleGuest] = useState<GuestItem | null>(null);
   const [ticketModalGuest, setTicketModalGuest] = useState<GuestItem | null>(null);
+
+  // Alta Express en Puerta
+  const [expressModalVisible, setExpressModalVisible] = useState<boolean>(false);
+  const [expressName, setExpressName] = useState<string>('');
+  const [expressPasses, setExpressPasses] = useState<number>(1);
+  const [expressTable, setExpressTable] = useState<string>('');
+  const [expressDiet, setExpressDiet] = useState<string>('');
+  const [expressAutoCheckIn, setExpressAutoCheckIn] = useState<boolean>(true);
+  const [savingExpress, setSavingExpress] = useState<boolean>(false);
+
+  // Reasignación Rápida de Mesa
+  const [reassignGuest, setReassignGuest] = useState<GuestItem | null>(null);
+  const [newTableInput, setNewTableInput] = useState<string>('');
+  const [savingTable, setSavingTable] = useState<boolean>(false);
 
   // Filtros y Búsqueda de Recepción en Puerta
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -124,7 +144,20 @@ export default function DoorReceptionScreen() {
 
   const fetchGuestsForEvent = async (eventId: number) => {
     setLoadingData(true);
+    const storageKey = `@wedding_check_guests_${eventId}`;
     try {
+      // Cargar caché local del evento de inmediato para evitar destellos
+      const cached = await AsyncStorage.getItem(storageKey);
+      if (cached) {
+        try {
+          setGuests(JSON.parse(cached));
+        } catch {
+          // ignore
+        }
+      } else {
+        setGuests([]);
+      }
+
       const headers = getAuthHeaders(user);
       const res = await fetch(`${APP_URL}/events/${eventId}/guests`, {
         headers,
@@ -137,108 +170,27 @@ export default function DoorReceptionScreen() {
           qr_code: g.qr_code || `WC-${String(g.id).padStart(4, '0')}`,
         }));
         setGuests(list);
+        await AsyncStorage.setItem(storageKey, JSON.stringify(list));
       } else {
-        loadMockData();
+        if (!cached) {
+          setGuests([]);
+        }
       }
     } catch {
-      loadMockData();
+      // Offline fallback
+      try {
+        const cached = await AsyncStorage.getItem(storageKey);
+        if (cached) {
+          setGuests(JSON.parse(cached));
+        } else {
+          setGuests([]);
+        }
+      } catch {
+        setGuests([]);
+      }
     } finally {
       setLoadingData(false);
     }
-  };
-
-  const loadMockData = () => {
-    setGuests([
-      {
-        id: 101,
-        name: 'Carlos Benítez & Sra.',
-        phone: '0981123456',
-        passes: 2,
-        confirmed_passes: 2,
-        adults: 2,
-        table_number: 'Mesa 3',
-        status: 'confirmed',
-        dietary_restrictions: 'Sin TACC (Celíaco)',
-        notes: 'Confirmado a tiempo',
-        qr_code: 'WC-0101',
-      },
-      {
-        id: 102,
-        name: 'Familia González',
-        phone: '0982234567',
-        passes: 4,
-        confirmed_passes: 4,
-        adults: 2,
-        children: 2,
-        table_number: 'Mesa 1',
-        status: 'attended',
-        dietary_restrictions: '1 Intolerancia a Lactosa',
-        notes: 'Familia de la novia',
-        qr_code: 'WC-0102',
-        attended_at: '19:42',
-      },
-      {
-        id: 103,
-        name: 'Dra. María Martínez',
-        phone: '0983345678',
-        passes: 1,
-        confirmed_passes: 1,
-        adults: 1,
-        table_number: 'Mesa Principal',
-        status: 'attended',
-        notes: 'Madrina',
-        qr_code: 'WC-0103',
-        attended_at: '19:15',
-      },
-      {
-        id: 104,
-        name: 'Ing. Rodrigo Rojas & Acompañante',
-        phone: '0984456789',
-        passes: 2,
-        confirmed_passes: 2,
-        adults: 2,
-        table_number: 'Mesa 5',
-        status: 'confirmed',
-        dietary_restrictions: 'Sin Lactosa',
-        notes: 'Confirmado a tiempo',
-        qr_code: 'WC-0104',
-      },
-      {
-        id: 105,
-        name: 'Fernando Villalba',
-        phone: '0985567890',
-        passes: 1,
-        confirmed_passes: 0,
-        adults: 1,
-        table_number: null,
-        status: 'pending',
-        notes: 'No confirmó antes de la fecha límite (Vencido)',
-        qr_code: 'WC-0105',
-      },
-      {
-        id: 106,
-        name: 'Cynthia Fernández',
-        phone: '0986678901',
-        passes: 2,
-        confirmed_passes: 2,
-        adults: 2,
-        table_number: 'Mesa 8',
-        status: 'confirmed',
-        dietary_restrictions: 'Sin Lactosa',
-        notes: 'Invitada Especial · Confirmada',
-        qr_code: 'WC-0248',
-      },
-      {
-        id: 107,
-        name: 'Lucía Méndez',
-        phone: '0988890123',
-        passes: 1,
-        confirmed_passes: 0,
-        status: 'declined',
-        notes: 'Declinó antes del vencimiento',
-        qr_code: 'WC-0107',
-      },
-    ]);
   };
 
   const handleRefresh = async () => {
@@ -422,6 +374,156 @@ export default function DoorReceptionScreen() {
     }
   };
 
+  // Alta Express de Invitados en Puerta
+  const handleCreateExpressGuest = async () => {
+    if (!expressName.trim()) {
+      Alert.alert('Nombre requerido', 'Por favor ingresá el nombre y apellido del invitado.');
+      return;
+    }
+    setSavingExpress(true);
+
+    const now = new Date();
+    const timestamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const newGuestId = `exp_${Date.now()}`;
+    const newQrCode = `WC-EXP-${String(Math.floor(1000 + Math.random() * 9000))}`;
+
+    const newGuest: GuestItem = {
+      id: newGuestId,
+      name: expressName.trim(),
+      phone: '',
+      passes: expressPasses,
+      confirmed_passes: expressPasses,
+      adults: expressPasses,
+      table_number: expressTable.trim() || 'Mesa General',
+      status: expressAutoCheckIn ? 'attended' : 'confirmed',
+      attended_at: expressAutoCheckIn ? timestamp : null,
+      dietary_restrictions: expressDiet.trim() || null,
+      notes: 'Invitado Express agregado en puerta',
+      qr_code: newQrCode,
+    };
+
+    setGuests((prev) => [newGuest, ...prev]);
+
+    try {
+      const autoPhone = `099${Math.floor(1000000 + Math.random() * 9000000)}`;
+      const headers = getAuthHeaders(user, { 'Content-Type': 'application/json' });
+      await fetch(`${APP_URL}/events/${selectedEventId}/guests`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: newGuest.name,
+          phone: autoPhone,
+          passes: newGuest.passes,
+          table_number: newGuest.table_number,
+          status: newGuest.status,
+          dietary_restrictions: newGuest.dietary_restrictions,
+          notes: newGuest.notes,
+        }),
+      });
+    } catch {
+      // offline fallback
+    } finally {
+      setSavingExpress(false);
+      setExpressModalVisible(false);
+      const addedName = expressName.trim();
+      setExpressName('');
+      setExpressPasses(1);
+      setExpressTable('');
+      setExpressDiet('');
+
+      Alert.alert(
+        'Invitado Express Creado',
+        `"${addedName}" fue registrado exitosamente${expressAutoCheckIn ? ' y marcado como INGRESADO' : ''}.\n🪑 ${newGuest.table_number} · 🎟️ ${newGuest.passes} pase(s)`
+      );
+    }
+  };
+
+  // Reasignación de Mesa Rápida
+  const handleSaveTableReassignment = async () => {
+    if (!reassignGuest) return;
+    const targetTable = newTableInput.trim() || 'Sin Mesa';
+    setSavingTable(true);
+
+    setGuests((prev) =>
+      prev.map((g) => (g.id === reassignGuest.id ? { ...g, table_number: targetTable } : g))
+    );
+
+    try {
+      const headers = getAuthHeaders(user, { 'Content-Type': 'application/json' });
+      await fetch(`${APP_URL}/guests/${reassignGuest.id}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ table_number: targetTable }),
+      });
+    } catch {
+      // offline fallback
+    } finally {
+      setSavingTable(false);
+      const guestName = reassignGuest.name;
+      setReassignGuest(null);
+      Alert.alert('Mesa Reasignada', `La mesa de "${guestName}" fue actualizada a: ${targetTable}`);
+    }
+  };
+
+  // Protocolo y Alertas VIP
+  const isVipGuest = (guest: GuestItem): boolean => {
+    if (guest.is_vip) return true;
+    const n = (guest.notes || '').toLowerCase();
+    const name = (guest.name || '').toLowerCase();
+    return (
+      n.includes('padrino') ||
+      n.includes('madrina') ||
+      n.includes('vip') ||
+      n.includes('testigo') ||
+      n.includes('novia') ||
+      n.includes('novio') ||
+      n.includes('padres') ||
+      n.includes('sobre') ||
+      n.includes('regalo') ||
+      name.includes('dra.') ||
+      name.includes('ing.')
+    );
+  };
+
+  const getVipBadgeText = (guest: GuestItem): string => {
+    if (guest.vip_label) return guest.vip_label;
+    const n = (guest.notes || '').toLowerCase();
+    if (n.includes('madrina')) return '👑 MADRINA';
+    if (n.includes('padrino')) return '👑 PADRINO';
+    if (n.includes('testigo')) return '⭐ TESTIGO';
+    if (n.includes('novia') || n.includes('novio')) return '💖 FAMILIA NOVIOS';
+    if (n.includes('sobre') || n.includes('regalo')) return '🎁 RECIBIR REGALO/SOBRE';
+    return '⭐ PROTOCOLO VIP';
+  };
+
+  // Reporte en vivo para Cocina / Maître por WhatsApp
+  const handleShareKitchenReport = () => {
+    const now = new Date();
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const weddingTitle = currentEvent ? currentEvent.title : 'Boda';
+
+    const specialDietGuests = preConfirmedGuests
+      .filter((g) => g.status === 'attended' && g.dietary_restrictions)
+      .map((g) => `• *${g.name}* (${g.table_number || 'Sin mesa'}): ${g.dietary_restrictions}`)
+      .join('\n');
+
+    const message = `👨‍🍳 *REPORTE DE CATERING EN VIVO - WEDDING CHECK*
+💍 *${weddingTitle.toUpperCase()}*
+⏰ *Hora de corte:* ${timeStr} hs
+━━━━━━━━━━━━━━━━━━━━
+👥 *Asistencia en salón:* ${stats.attended} familias (${stats.attendedPasses} personas ingresadas)
+⏳ *Faltan por llegar:* ${stats.pendingEntrance} familias (${stats.pendingEntrancePasses} personas)
+
+🍽️ *PLATOS A MARCHAR EN SALÓN:*
+• 🍽️ *Menús Estándar:* ${stats.standardPasses} platos
+${stats.celiacCount > 0 ? `• 🌾 *Sin TACC / Celíacos:* ${stats.celiacCount} platos\n` : ''}${stats.lactoseCount > 0 ? `• 🥛 *Sin Lactosa:* ${stats.lactoseCount} platos\n` : ''}${stats.veggieCount > 0 ? `• 🌱 *Vegetarianos:* ${stats.veggieCount} platos\n` : ''}━━━━━━━━━━━━━━━━━━━━
+${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specialDietGuests}\n━━━━━━━━━━━━━━━━━━━━\n` : ''}✨ _Reporte generado por Wedding Check_`;
+
+    Linking.openURL(`https://wa.me/?text=${encodeURIComponent(message)}`).catch(() => {
+      Alert.alert('WhatsApp no disponible', 'No se pudo abrir WhatsApp.');
+    });
+  };
+
   // Lista de invitados que CONFIRMARON antes de la fecha de vencimiento (Filtrado estricto de puerta)
   const preConfirmedGuests = useMemo(() => {
     return guests.filter((g) => g.status === 'confirmed' || g.status === 'attended');
@@ -456,6 +558,10 @@ export default function DoorReceptionScreen() {
     });
     return groups;
   }, [preConfirmedGuests]);
+
+  const existingTableNames = useMemo(() => {
+    return Object.keys(tableGroups).filter((t) => t !== 'Sin Mesa Asignada');
+  }, [tableGroups]);
 
   // Cálculo de Métricas de Puerta en Vivo (Día del Evento - Solo Confirmados)
   const stats = useMemo(() => {
@@ -662,6 +768,20 @@ export default function DoorReceptionScreen() {
                   </View>
                 )}
               </View>
+
+              {/* Botón WhatsApp Cocina / Maître */}
+              <Pressable onPress={handleShareKitchenReport} style={styles.kitchenShareBtn}>
+                <LinearGradient
+                  colors={['#10b981', '#059669']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.kitchenShareGradient}>
+                  <Ionicons name="logo-whatsapp" size={17} color="#ffffff" />
+                  <ThemedText style={styles.kitchenShareTitle}>
+                    ENVIAR REPORTE A COCINA / MAÎTRE
+                  </ThemedText>
+                </LinearGradient>
+              </Pressable>
             </View>
           </View>
 
@@ -686,23 +806,32 @@ export default function DoorReceptionScreen() {
 
           {viewMode === 'list' ? (
             <>
-              {/* Búsqueda en Puerta */}
+              {/* Búsqueda en Puerta y Alta Express */}
               <View style={styles.searchSection}>
-                <View style={styles.searchInputWrapper}>
-                  <ThemedText style={styles.searchIcon}>🔍</ThemedText>
-                  <TextInput
-                    style={styles.searchInput}
-                    placeholder="Buscar por nombre, código QR o mesa..."
-                    placeholderTextColor="#64748b"
-                    value={searchQuery}
-                    onChangeText={setSearchQuery}
-                    autoCapitalize="none"
-                  />
-                  {searchQuery.length > 0 && (
-                    <Pressable onPress={() => setSearchQuery('')} style={styles.clearBtn}>
-                      <ThemedText style={styles.clearText}>✕</ThemedText>
-                    </Pressable>
-                  )}
+                <View style={styles.searchRowWithExpress}>
+                  <View style={styles.searchInputWrapper}>
+                    <ThemedText style={styles.searchIcon}>🔍</ThemedText>
+                    <TextInput
+                      style={styles.searchInput}
+                      placeholder="Buscar por nombre, código QR o mesa..."
+                      placeholderTextColor="#64748b"
+                      value={searchQuery}
+                      onChangeText={setSearchQuery}
+                      autoCapitalize="none"
+                    />
+                    {searchQuery.length > 0 && (
+                      <Pressable onPress={() => setSearchQuery('')} style={styles.clearBtn}>
+                        <ThemedText style={styles.clearText}>✕</ThemedText>
+                      </Pressable>
+                    )}
+                  </View>
+
+                  <Pressable
+                    onPress={() => setExpressModalVisible(true)}
+                    style={styles.expressBtn}>
+                    <Ionicons name="person-add" size={15} color="#ffffff" />
+                    <ThemedText style={styles.expressBtnText}>+ Express</ThemedText>
+                  </Pressable>
                 </View>
 
                 {/* Filtros Rápidos en Puerta */}
@@ -765,6 +894,14 @@ export default function DoorReceptionScreen() {
                             <ThemedText style={styles.guestName}>
                               {guest.name}
                             </ThemedText>
+
+                            {isVipGuest(guest) && (
+                              <View style={styles.vipListBadge}>
+                                <ThemedText style={styles.vipListBadgeText}>
+                                  {getVipBadgeText(guest)}
+                                </ThemedText>
+                              </View>
+                            )}
                             
                             {isAttended ? (
                               <View style={styles.attendedBadge}>
@@ -782,11 +919,17 @@ export default function DoorReceptionScreen() {
                           </View>
 
                           <View style={styles.detailsRow}>
-                            <View style={styles.tableBadgeProminent}>
+                            <Pressable
+                              onPress={(e) => {
+                                e.stopPropagation();
+                                setReassignGuest(guest);
+                                setNewTableInput(guest.table_number || '');
+                              }}
+                              style={styles.tableBadgeProminentClickable}>
                               <ThemedText style={styles.tableTextProminent}>
-                                🪑 {guest.table_number ? (guest.table_number.toLowerCase().includes('mesa') ? guest.table_number : `Mesa: ${guest.table_number}`) : 'Sin Mesa Asignada'}
+                                🪑 {guest.table_number ? (guest.table_number.toLowerCase().includes('mesa') ? guest.table_number : `Mesa: ${guest.table_number}`) : 'Sin Mesa'} ✏️
                               </ThemedText>
-                            </View>
+                            </Pressable>
 
                             <View style={styles.passesBadgeSubtle}>
                               <ThemedText style={styles.passesTextSubtle}>
@@ -1028,6 +1171,23 @@ export default function DoorReceptionScreen() {
 
             {scanResult && (
               <View style={styles.registeredBody}>
+                {/* Banner de Protocolo / Alerta VIP */}
+                {isVipGuest(scanResult.guest) && (
+                  <View style={styles.vipScanBanner}>
+                    <View style={styles.vipScanBadgeRow}>
+                      <ThemedText style={styles.vipScanBadgeText}>👑 ATENCIÓN PROTOCOLO / VIP</ThemedText>
+                    </View>
+                    <ThemedText style={styles.vipScanTitle}>
+                      {getVipBadgeText(scanResult.guest)}
+                    </ThemedText>
+                    {scanResult.guest.notes ? (
+                      <ThemedText style={styles.vipScanNotes}>
+                        📝 {scanResult.guest.notes}
+                      </ThemedText>
+                    ) : null}
+                  </View>
+                )}
+
                 {/* Rejilla: Mesa Asignada y Pases */}
                 <View style={styles.registeredGridRow}>
                   <View style={styles.registeredGridItemProminent}>
@@ -1341,10 +1501,20 @@ export default function DoorReceptionScreen() {
 
                 <View style={styles.ticketGrid}>
                   <View style={styles.ticketGridItem}>
-                    <ThemedText style={styles.ticketGridLabel}>🪑 MESA ASSIGNADA</ThemedText>
+                    <ThemedText style={styles.ticketGridLabel}>🪑 MESA ASIGNADA</ThemedText>
                     <ThemedText style={styles.ticketGridValProminent}>
                       {ticketModalGuest.table_number || 'Sin Mesa'}
                     </ThemedText>
+                    <Pressable
+                      onPress={() => {
+                        const target = ticketModalGuest;
+                        setTicketModalGuest(null);
+                        setReassignGuest(target);
+                        setNewTableInput(target.table_number || '');
+                      }}
+                      style={styles.reassignBtnPill}>
+                      <ThemedText style={styles.reassignBtnPillText}>✏️ Cambiar Mesa</ThemedText>
+                    </Pressable>
                   </View>
 
                   <View style={styles.ticketGridItem}>
@@ -1375,6 +1545,211 @@ export default function DoorReceptionScreen() {
               onPress={() => setTicketModalGuest(null)}
               style={styles.ticketCloseBtn}
             />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal para Reasignación Rápida de Mesa */}
+      <Modal visible={Boolean(reassignGuest)} animationType="fade" transparent statusBarTranslucent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View>
+                <ThemedText style={styles.modalHeaderTitle}>🪑 Reasignar Mesa</ThemedText>
+                <ThemedText style={styles.modalHeaderSub}>{reassignGuest?.name}</ThemedText>
+              </View>
+              <Pressable onPress={() => setReassignGuest(null)} style={styles.closeBtn}>
+                <Ionicons name="close" size={20} color="#64748b" />
+              </Pressable>
+            </View>
+
+            <View style={styles.modalBody}>
+              <ThemedText style={styles.inputLabel}>Mesa Actual:</ThemedText>
+              <View style={styles.currentTableBox}>
+                <ThemedText style={styles.currentTableText}>
+                  {reassignGuest?.table_number || 'Sin Mesa Asignada'}
+                </ThemedText>
+              </View>
+
+              <ThemedText style={styles.inputLabel}>Seleccionar Mesa Existente:</ThemedText>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tableChipsRow}>
+                {existingTableNames.map((tbl) => (
+                  <Pressable
+                    key={tbl}
+                    onPress={() => setNewTableInput(tbl)}
+                    style={[
+                      styles.tableChip,
+                      newTableInput === tbl && styles.tableChipActive,
+                    ]}>
+                    <ThemedText
+                      style={[
+                        styles.tableChipText,
+                        newTableInput === tbl && styles.tableChipTextActive,
+                      ]}>
+                      {tbl}
+                    </ThemedText>
+                  </Pressable>
+                ))}
+              </ScrollView>
+
+              <ThemedText style={styles.inputLabel}>O escribir nueva mesa:</ThemedText>
+              <TextInput
+                style={styles.textInput}
+                placeholder="Ej: Mesa 12 / Mesa Terraza"
+                placeholderTextColor="#94a3b8"
+                value={newTableInput}
+                onChangeText={setNewTableInput}
+              />
+            </View>
+
+            <View style={styles.modalFooter}>
+              <Pressable onPress={() => setReassignGuest(null)} style={styles.cancelBtn}>
+                <ThemedText style={styles.cancelBtnText}>Cancelar</ThemedText>
+              </Pressable>
+
+              <Pressable
+                disabled={savingTable}
+                onPress={handleSaveTableReassignment}
+                style={styles.saveBtn}>
+                <LinearGradient
+                  colors={['#FF0055', '#E61E50']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.saveBtnGradient}>
+                  {savingTable ? (
+                    <ActivityIndicator color="#ffffff" size="small" />
+                  ) : (
+                    <ThemedText style={styles.saveBtnText}>Guardar Mesa</ThemedText>
+                  )}
+                </LinearGradient>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal para Alta Express de Invitados en Puerta */}
+      <Modal visible={expressModalVisible} animationType="fade" transparent statusBarTranslucent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View>
+                <ThemedText style={styles.modalHeaderTitle}>➕ Alta Express de Invitado</ThemedText>
+                <ThemedText style={styles.modalHeaderSub}>Registrar en puerta sin invitación previa</ThemedText>
+              </View>
+              <Pressable onPress={() => setExpressModalVisible(false)} style={styles.closeBtn}>
+                <Ionicons name="close" size={20} color="#64748b" />
+              </Pressable>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.modalBody}>
+              <View style={styles.inputGroup}>
+                <ThemedText style={styles.inputLabel}>Nombre y Apellido *</ThemedText>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Ej: Laura & Marcelo Benítez"
+                  placeholderTextColor="#94a3b8"
+                  value={expressName}
+                  onChangeText={setExpressName}
+                />
+              </View>
+
+              <View style={styles.inputGroup}>
+                <ThemedText style={styles.inputLabel}>Cantidad de Pases / Personas</ThemedText>
+                <View style={styles.counterRow}>
+                  <Pressable
+                    onPress={() => setExpressPasses((p) => Math.max(1, p - 1))}
+                    style={styles.counterBtn}>
+                    <ThemedText style={styles.counterBtnText}>-</ThemedText>
+                  </Pressable>
+                  <ThemedText style={styles.counterVal}>{expressPasses} pases</ThemedText>
+                  <Pressable
+                    onPress={() => setExpressPasses((p) => p + 1)}
+                    style={styles.counterBtn}>
+                    <ThemedText style={styles.counterBtnText}>+</ThemedText>
+                  </Pressable>
+                </View>
+              </View>
+
+              <View style={styles.inputGroup}>
+                <ThemedText style={styles.inputLabel}>Mesa Asignada</ThemedText>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Ej: Mesa 4 / Mesa Jóvenes"
+                  placeholderTextColor="#94a3b8"
+                  value={expressTable}
+                  onChangeText={setExpressTable}
+                />
+                {existingTableNames.length > 0 && (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tableChipsRowSmall}>
+                    {existingTableNames.slice(0, 6).map((tbl) => (
+                      <Pressable
+                        key={tbl}
+                        onPress={() => setExpressTable(tbl)}
+                        style={[
+                          styles.tableChipSmall,
+                          expressTable === tbl && styles.tableChipSmallActive,
+                        ]}>
+                        <ThemedText
+                          style={[
+                            styles.tableChipSmallText,
+                            expressTable === tbl && styles.tableChipSmallTextActive,
+                          ]}>
+                          {tbl}
+                        </ThemedText>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                )}
+              </View>
+
+              <View style={styles.inputGroup}>
+                <ThemedText style={styles.inputLabel}>Preferencia de Menú / Dieta (Opcional)</ThemedText>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Ej: Celíaco / Sin Lactosa / Vegetariano"
+                  placeholderTextColor="#94a3b8"
+                  value={expressDiet}
+                  onChangeText={setExpressDiet}
+                />
+              </View>
+
+              <View style={styles.switchRow}>
+                <View style={{ flex: 1 }}>
+                  <ThemedText style={styles.switchTitle}>¿Acreditar e ingresar ahora?</ThemedText>
+                  <ThemedText style={styles.switchSub}>Marca la hora de ingreso en el salón de inmediato</ThemedText>
+                </View>
+                <Switch
+                  value={expressAutoCheckIn}
+                  onValueChange={setExpressAutoCheckIn}
+                  trackColor={{ false: '#cbd5e1', true: '#fecdd3' }}
+                  thumbColor={expressAutoCheckIn ? '#e11d48' : '#94a3b8'}
+                />
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <Pressable onPress={() => setExpressModalVisible(false)} style={styles.cancelBtn}>
+                <ThemedText style={styles.cancelBtnText}>Cancelar</ThemedText>
+              </Pressable>
+
+              <Pressable
+                disabled={savingExpress}
+                onPress={handleCreateExpressGuest}
+                style={styles.saveBtn}>
+                <LinearGradient
+                  colors={['#10b981', '#059669']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.saveBtnGradient}>
+                  {savingExpress ? (
+                    <ActivityIndicator color="#ffffff" size="small" />
+                  ) : (
+                    <ThemedText style={styles.saveBtnText}>Registrar Invitado</ThemedText>
+                  )}
+                </LinearGradient>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -2775,6 +3150,332 @@ const styles = StyleSheet.create({
   confirmToggleSubmitText: {
     fontSize: 13,
     fontWeight: '900',
+    color: '#ffffff',
+  },
+
+  /* Botón Compartir Cocina */
+  kitchenShareBtn: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginTop: 8,
+  },
+  kitchenShareGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  kitchenShareTitle: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+
+  /* Búsqueda y Alta Express */
+  searchRowWithExpress: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  expressBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#e11d48',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 14,
+    shadowColor: '#e11d48',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  expressBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  /* VIP Badges & Protocolo */
+  vipListBadge: {
+    backgroundColor: '#fef3c7',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#fde047',
+  },
+  vipListBadgeText: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#b45309',
+    letterSpacing: 0.5,
+  },
+  vipScanBanner: {
+    backgroundColor: '#fffbeb',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1.5,
+    borderColor: '#f59e0b',
+    gap: 4,
+    alignItems: 'center',
+  },
+  vipScanBadgeRow: {
+    backgroundColor: '#fef3c7',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+  },
+  vipScanBadgeText: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#b45309',
+    letterSpacing: 0.8,
+  },
+  vipScanTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#92400e',
+    textAlign: 'center',
+  },
+  vipScanNotes: {
+    fontSize: 12,
+    color: '#78350f',
+    textAlign: 'center',
+    fontWeight: '600',
+  },
+
+  /* Reasignación de Mesa */
+  tableBadgeProminentClickable: {
+    backgroundColor: '#fff1f2',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fecdd3',
+  },
+  reassignBtnPill: {
+    backgroundColor: '#fff1f2',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#fecdd3',
+    alignSelf: 'center',
+  },
+  reassignBtnPillText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#e11d48',
+  },
+  currentTableBox: {
+    backgroundColor: '#f1f5f9',
+    padding: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  currentTableText: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#0f172a',
+  },
+  tableChipsRow: {
+    gap: 8,
+    paddingVertical: 4,
+  },
+  tableChip: {
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  tableChipActive: {
+    backgroundColor: '#e11d48',
+    borderColor: '#be123c',
+  },
+  tableChipText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#475569',
+  },
+  tableChipTextActive: {
+    color: '#ffffff',
+  },
+  tableChipsRowSmall: {
+    gap: 6,
+    marginTop: 4,
+  },
+  tableChipSmall: {
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  tableChipSmallActive: {
+    backgroundColor: '#e11d48',
+    borderColor: '#be123c',
+  },
+  tableChipSmallText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  tableChipSmallTextActive: {
+    color: '#ffffff',
+  },
+
+  /* Counter Row para Express Passes */
+  counterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  counterBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f1f5f9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  counterBtnText: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#0f172a',
+  },
+  counterVal: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#0f172a',
+    minWidth: 70,
+    textAlign: 'center',
+  },
+
+  /* Switch Row */
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fff1f2',
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#fecdd3',
+    gap: 12,
+  },
+  switchTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#9f1239',
+  },
+  switchSub: {
+    fontSize: 11,
+    color: '#e11d48',
+  },
+  modalHeaderSub: {
+    fontSize: 12,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  modalCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 20,
+    width: '100%',
+    maxWidth: 440,
+    maxHeight: '90%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0f172a',
+  },
+  closeBtn: {
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: '#f1f5f9',
+  },
+  modalBody: {
+    gap: 12,
+    paddingBottom: 8,
+  },
+  inputGroup: {
+    gap: 6,
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#475569',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  textInput: {
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0f172a',
+    backgroundColor: '#f8fafc',
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 16,
+  },
+  cancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: '#f1f5f9',
+  },
+  cancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  saveBtn: {
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  saveBtnGradient: {
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
     color: '#ffffff',
   },
 });

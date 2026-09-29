@@ -12,6 +12,7 @@ export interface EventItem {
   location?: string;
   guest_count?: number;
   description?: string;
+  timing?: any[];
 }
 
 interface EventContextType {
@@ -67,47 +68,7 @@ export function EventProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadFallbackMockEvents = async () => {
-    const today = new Date();
-    const todayIso = today.toISOString().split('T')[0];
-    const mockList: EventItem[] = [
-      {
-        id: 1,
-        title: 'Boda Sofía & Mateo',
-        couple_names: 'Sofía & Mateo',
-        event_date: todayIso,
-        location: 'Quinta Las Rosas - Asunción',
-        guest_count: 156,
-      },
-      {
-        id: 2,
-        title: 'Boda Valentina & Diego',
-        couple_names: 'Valentina & Diego',
-        event_date: '2026-11-28',
-        location: 'Castillo del Lago - San Bernardino',
-        guest_count: 220,
-      },
-      {
-        id: 3,
-        title: 'Boda Camila & Lucas',
-        couple_names: 'Camila & Lucas',
-        event_date: '2026-12-05',
-        location: 'Club Náutico San José',
-        guest_count: 180,
-      },
-    ];
-
-    setEvents(mockList);
-    const savedIdStr = await storage.getItem(SELECTED_EVENT_STORAGE_KEY);
-    const savedId = savedIdStr ? parseInt(savedIdStr, 10) : null;
-    const exists = savedId ? mockList.some((e) => e.id === savedId) : false;
-
-    if (exists && savedId) {
-      setSelectedEventIdState(savedId);
-    } else {
-      setSelectedEventIdState(mockList[0].id);
-    }
-  };
+const EVENTS_CACHE_KEY = '@wedding_check_events_cache';
 
   const fetchEvents = useCallback(async () => {
     if (!user) {
@@ -137,9 +98,10 @@ export function EventProvider({ children }: { children: React.ReactNode }) {
         const data = await res.json();
         const evList: EventItem[] = Array.isArray(data)
           ? data
-          : data.events || data.data || [];
+          : data.events || data.data || (data.activeEvent ? [data.activeEvent] : []);
 
         setEvents(evList);
+        await storage.setItem(EVENTS_CACHE_KEY, JSON.stringify(evList));
 
         if (evList.length > 0) {
           const savedIdStr = await storage.getItem(SELECTED_EVENT_STORAGE_KEY);
@@ -158,10 +120,43 @@ export function EventProvider({ children }: { children: React.ReactNode }) {
           setSelectedEventIdState(null);
         }
       } else {
-        await loadFallbackMockEvents();
+        // Fallback a caché offline de eventos reales del servidor
+        const cached = await storage.getItem(EVENTS_CACHE_KEY);
+        if (cached) {
+          const cachedList: EventItem[] = JSON.parse(cached);
+          setEvents(cachedList);
+          if (cachedList.length > 0) {
+            const savedIdStr = await storage.getItem(SELECTED_EVENT_STORAGE_KEY);
+            const savedId = savedIdStr ? parseInt(savedIdStr, 10) : null;
+            const exists = savedId ? cachedList.some((e) => e.id === savedId) : false;
+            setSelectedEventIdState(exists && savedId ? savedId : cachedList[0].id);
+          }
+        } else {
+          setEvents([]);
+          setSelectedEventIdState(null);
+        }
       }
     } catch {
-      await loadFallbackMockEvents();
+      // Offline fallback
+      try {
+        const cached = await storage.getItem(EVENTS_CACHE_KEY);
+        if (cached) {
+          const cachedList: EventItem[] = JSON.parse(cached);
+          setEvents(cachedList);
+          if (cachedList.length > 0) {
+            const savedIdStr = await storage.getItem(SELECTED_EVENT_STORAGE_KEY);
+            const savedId = savedIdStr ? parseInt(savedIdStr, 10) : null;
+            const exists = savedId ? cachedList.some((e) => e.id === savedId) : false;
+            setSelectedEventIdState(exists && savedId ? savedId : cachedList[0].id);
+          }
+        } else {
+          setEvents([]);
+          setSelectedEventIdState(null);
+        }
+      } catch {
+        setEvents([]);
+        setSelectedEventIdState(null);
+      }
     } finally {
       setIsLoading(false);
     }

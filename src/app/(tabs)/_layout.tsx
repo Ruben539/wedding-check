@@ -61,6 +61,15 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="cronograma"
+        options={{
+          title: 'Timeline',
+          tabBarIcon: ({ focused, color }) => (
+            <Ionicons name={focused ? 'timer' : 'timer-outline'} size={24} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="invitados"
         options={{
           title: 'Invitados',
