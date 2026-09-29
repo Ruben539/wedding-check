@@ -15,7 +15,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Redirect, router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 
-import { useAuth } from '@/context/auth-context';
+import { useAuth, getAuthHeaders } from '@/context/auth-context';
+import { useEvent, EventItem } from '@/context/event-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui/button';
@@ -41,21 +42,12 @@ interface GuestItem {
   attended_at?: string | null;
 }
 
-interface EventItem {
-  id: number;
-  title: string;
-  couple_names?: string;
-  event_date?: string;
-  location?: string;
-}
-
 export default function DoorReceptionScreen() {
   const { user, logout, isLoading: authLoading } = useAuth();
+  const { events, selectedEvent, selectedEventId, setSelectedEventId, refreshEvents } = useEvent();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
 
-  const [events, setEvents] = useState<EventItem[]>([]);
-  const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
   const [guests, setGuests] = useState<GuestItem[]>([]);
   const [loadingData, setLoadingData] = useState<boolean>(false);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -80,10 +72,10 @@ export default function DoorReceptionScreen() {
   const [updatingGuestId, setUpdatingGuestId] = useState<number | string | null>(null);
 
   useEffect(() => {
-    if (user) {
-      loadInitialEvents();
+    if (user && selectedEventId) {
+      fetchGuestsForEvent(selectedEventId);
     }
-  }, [user]);
+  }, [user, selectedEventId]);
 
   const formatDisplayTime = (rawTime?: string | null): string => {
     if (!rawTime) {
@@ -130,25 +122,21 @@ export default function DoorReceptionScreen() {
     return `${today.getDate()} de ${months[today.getMonth()]} de ${today.getFullYear()}`;
   };
 
-  const loadInitialEvents = async () => {
+  const fetchGuestsForEvent = async (eventId: number) => {
     setLoadingData(true);
-    const todayIso = getTodayIsoDate();
     try {
-      const res = await fetch(`${APP_URL}/event`, {
-        headers: { 'Accept': 'application/json' },
+      const headers = getAuthHeaders(user);
+      const res = await fetch(`${APP_URL}/events/${eventId}/guests`, {
+        headers,
       });
       if (res.ok) {
         const data = await res.json();
-        const evList: EventItem[] = Array.isArray(data) ? data : data.events || [];
-        setEvents(evList);
-        if (evList.length > 0) {
-          // Seleccionar automáticamente el evento de la fecha de hoy si coincide
-          const todayEv = evList.find((e) => e.event_date === todayIso) || evList[0];
-          setSelectedEventId(todayEv.id);
-          fetchGuestsForEvent(todayEv.id);
-        } else {
-          loadMockData();
-        }
+        const rawGuests = Array.isArray(data) ? data : (data.guests || data.data || []);
+        const list = rawGuests.map((g: any) => ({
+          ...g,
+          qr_code: g.qr_code || `WC-${String(g.id).padStart(4, '0')}`,
+        }));
+        setGuests(list);
       } else {
         loadMockData();
       }
@@ -159,35 +147,7 @@ export default function DoorReceptionScreen() {
     }
   };
 
-  const fetchGuestsForEvent = async (eventId: number) => {
-    try {
-      const res = await fetch(`${APP_URL}/events/${eventId}/guests`, {
-        headers: { 'Accept': 'application/json' },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const list = (data.guests || []).map((g: any) => ({
-          ...g,
-          qr_code: `WC-${String(g.id).padStart(4, '0')}`,
-        }));
-        setGuests(list);
-      }
-    } catch {
-      // mantener datos previos si falla
-    }
-  };
-
   const loadMockData = () => {
-    const todayIso = getTodayIsoDate();
-    const mockEv: EventItem = {
-      id: 1,
-      title: 'Boda Sofía & Mateo',
-      couple_names: 'Sofía & Mateo',
-      event_date: todayIso,
-      location: 'Quinta Las Rosas - Asunción',
-    };
-    setEvents([mockEv]);
-    setSelectedEventId(1);
     setGuests([
       {
         id: 101,
@@ -283,10 +243,9 @@ export default function DoorReceptionScreen() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
+    await refreshEvents();
     if (selectedEventId) {
       await fetchGuestsForEvent(selectedEventId);
-    } else {
-      await loadInitialEvents();
     }
     setRefreshing(false);
   };
@@ -313,12 +272,12 @@ export default function DoorReceptionScreen() {
     );
 
     try {
+      const headers = getAuthHeaders(user, {
+        'Content-Type': 'application/json',
+      });
       await fetch(`${APP_URL}/guests/${guest.id}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
+        headers,
         body: JSON.stringify({ status: newStatus }),
       });
     } catch {
@@ -377,13 +336,16 @@ export default function DoorReceptionScreen() {
     }
 
     try {
+      const headers = getAuthHeaders(user, {
+        'Content-Type': 'application/json',
+      });
       const res = await fetch(`${APP_URL}/check-in/scan`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify({ token: cleanToken }),
+        headers,
+        body: JSON.stringify({
+          token: cleanToken,
+          event_id: selectedEventId,
+        }),
       });
 
       const json = await res.json();
@@ -1442,6 +1404,7 @@ const styles = StyleSheet.create({
   headerBar: {
     width: '100%',
     maxWidth: MaxContentWidth,
+    alignSelf: 'center',
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.three,
     backgroundColor: '#ffffff',
@@ -1507,6 +1470,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.four,
     maxWidth: MaxContentWidth,
     width: '100%',
+    alignSelf: 'center',
     gap: Spacing.four,
   },
 
@@ -1584,7 +1548,8 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1.2,
-    padding: Spacing.three,
+    paddingHorizontal: 10,
+    paddingVertical: Spacing.three,
     borderRadius: 16,
     justifyContent: 'center',
     shadowColor: '#10b981',
@@ -1612,7 +1577,8 @@ const styles = StyleSheet.create({
   },
   statCardSecondary: {
     flex: 1,
-    padding: Spacing.three,
+    paddingHorizontal: 10,
+    paddingVertical: Spacing.three,
     borderRadius: 16,
     backgroundColor: '#ffffff',
     borderWidth: 1,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Alert,
   Switch,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Redirect } from 'expo-router';
@@ -14,87 +15,22 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 
 import { useAuth } from '@/context/auth-context';
+import { useEvent } from '@/context/event-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui/button';
 import { Spacing, MaxContentWidth } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { APP_URL } from '@/env';
-
-interface EventItem {
-  id: number;
-  title: string;
-  couple_names?: string;
-  event_date?: string;
-  location?: string;
-  guest_count?: number;
-}
 
 export default function ConfigScreen() {
   const { user, logout, isLoading: authLoading } = useAuth();
+  const { events, selectedEvent, selectedEventId, setSelectedEventId, isLoading: loading, refreshEvents } = useEvent();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-
-  const [events, setEvents] = useState<EventItem[]>([]);
-  const [selectedEventId, setSelectedEventId] = useState<number>(1);
-  const [loading, setLoading] = useState<boolean>(false);
 
   // Opciones de configuración
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [autoCheckIn, setAutoCheckIn] = useState<boolean>(true);
-
-  useEffect(() => {
-    loadEvents();
-  }, []);
-
-  const loadEvents = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${APP_URL}/event`, {
-        headers: { Accept: 'application/json' },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const list = Array.isArray(data) ? data : data.events || [];
-        setEvents(list);
-      } else {
-        loadMockEvents();
-      }
-    } catch {
-      loadMockEvents();
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadMockEvents = () => {
-    setEvents([
-      {
-        id: 1,
-        title: 'Boda Sofía & Mateo',
-        couple_names: 'Sofía & Mateo',
-        event_date: '15 de Octubre de 2026',
-        location: 'Quinta Las Rosas - Asunción',
-        guest_count: 156,
-      },
-      {
-        id: 2,
-        title: 'Boda Valentina & Diego',
-        couple_names: 'Valentina & Diego',
-        event_date: '28 de Noviembre de 2026',
-        location: 'Castillo del Lago - San Bernardino',
-        guest_count: 220,
-      },
-      {
-        id: 3,
-        title: 'Boda Camila & Lucas',
-        couple_names: 'Camila & Lucas',
-        event_date: '05 de Diciembre de 2026',
-        location: 'Club Náutico San José',
-        guest_count: 180,
-      },
-    ]);
-  };
 
   if (authLoading) {
     return (
@@ -108,7 +44,6 @@ export default function ConfigScreen() {
     return <Redirect href="/login" />;
   }
 
-  const selectedEvent = events.find((e) => e.id === selectedEventId) || events[0];
 
   return (
     <ThemedView style={styles.container}>
@@ -125,7 +60,10 @@ export default function ConfigScreen() {
         <ScrollView
           style={styles.scrollView}
           contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
-          showsVerticalScrollIndicator={false}>
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={loading} onRefresh={refreshEvents} colors={['#e11d48']} />
+          }>
 
           {/* TARJETA DEL EVENTO ACTIVO */}
           {selectedEvent && (

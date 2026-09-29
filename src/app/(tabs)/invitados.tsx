@@ -14,7 +14,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Redirect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 
-import { useAuth } from '@/context/auth-context';
+import { useAuth, getAuthHeaders } from '@/context/auth-context';
+import { useEvent } from '@/context/event-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui/button';
@@ -36,6 +37,7 @@ interface RSVPGuestItem {
 
 export default function GuestListRSVPScreen() {
   const { user, logout, isLoading: authLoading } = useAuth();
+  const { selectedEvent, selectedEventId } = useEvent();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
 
@@ -46,20 +48,24 @@ export default function GuestListRSVPScreen() {
   const [filterRsvp, setFilterRsvp] = useState<'all' | 'confirmed' | 'pending_rsvp' | 'declined'>('all');
 
   useEffect(() => {
-    if (user) {
-      loadRSVPData();
+    if (user && selectedEventId) {
+      loadRSVPData(selectedEventId);
     }
-  }, [user]);
+  }, [user, selectedEventId]);
 
-  const loadRSVPData = async () => {
+  const loadRSVPData = async (eventId?: number) => {
+    const targetId = eventId || selectedEventId;
+    if (!targetId) return;
     setLoading(true);
     try {
-      const res = await fetch(`${APP_URL}/events/1/guests`, {
-        headers: { Accept: 'application/json' },
+      const headers = getAuthHeaders(user);
+      const res = await fetch(`${APP_URL}/events/${targetId}/guests`, {
+        headers,
       });
       if (res.ok) {
         const data = await res.json();
-        const list = (data.guests || []).map((g: any) => ({
+        const rawGuests = Array.isArray(data) ? data : (data.guests || data.data || []);
+        const list = rawGuests.map((g: any) => ({
           ...g,
           rsvp_status: g.status === 'declined' ? 'declined' : g.status === 'pending' ? 'pending_rsvp' : 'confirmed',
         }));
@@ -164,7 +170,9 @@ export default function GuestListRSVPScreen() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await loadRSVPData();
+    if (selectedEventId) {
+      await loadRSVPData(selectedEventId);
+    }
     setRefreshing(false);
   };
 
@@ -233,7 +241,9 @@ export default function GuestListRSVPScreen() {
         {/* Top Header */}
         <View style={styles.headerBar}>
           <View style={styles.headerTitleCol}>
-            <ThemedText style={styles.headerSubtitle}>GESTIÓN PREVIA DE BODA</ThemedText>
+            <ThemedText style={styles.headerSubtitle}>
+              {selectedEvent ? `BODA: ${selectedEvent.title.toUpperCase()}` : 'GESTIÓN PREVIA DE BODA'}
+            </ThemedText>
             <ThemedText type="subtitle" style={styles.headerTitle}>Lista de Invitados & RSVP</ThemedText>
           </View>
         </View>
@@ -502,6 +512,7 @@ const styles = StyleSheet.create({
   headerBar: {
     width: '100%',
     maxWidth: MaxContentWidth,
+    alignSelf: 'center',
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.three,
     backgroundColor: '#ffffff',
@@ -548,6 +559,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.four,
     maxWidth: MaxContentWidth,
     width: '100%',
+    alignSelf: 'center',
     gap: Spacing.four,
   },
 
@@ -599,7 +611,8 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1.2,
-    padding: Spacing.three,
+    paddingHorizontal: 10,
+    paddingVertical: Spacing.three,
     borderRadius: 16,
     justifyContent: 'center',
   },
@@ -621,7 +634,8 @@ const styles = StyleSheet.create({
   },
   statCardSecondary: {
     flex: 1,
-    padding: Spacing.three,
+    paddingHorizontal: 10,
+    paddingVertical: Spacing.three,
     borderRadius: 16,
     backgroundColor: '#ffffff',
     borderWidth: 1,

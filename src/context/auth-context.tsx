@@ -127,13 +127,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const userData = data.user || {};
+      const receivedToken = data.token || data.access_token || data.plainTextToken || (data.data && data.data.token) || undefined;
       const newUser: User = {
         id: String(userData.id || Date.now()),
         name: userData.name || emailInput.split('@')[0],
         email: userData.email || emailInput.toLowerCase(),
         avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.name || 'User')}&background=e11d48&color=fff`,
         role: userData.role || 'Usuario',
-        token: data.token,
+        token: receivedToken,
       };
 
       await saveUserSession(newUser);
@@ -151,6 +152,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         email: emailInput.toLowerCase(),
         avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(formattedName)}&background=e11d48&color=fff`,
         role: 'Organizador',
+        token: 'mock_token_' + Date.now(),
       };
 
       await saveUserSession(mockUser);
@@ -210,4 +212,15 @@ export function useAuth() {
     throw new Error('useAuth debe ser usado dentro de un AuthProvider');
   }
   return context;
+}
+
+export function getAuthHeaders(user: User | null, extraHeaders: Record<string, string> = {}): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Accept': 'application/json',
+    ...extraHeaders,
+  };
+  if (user?.token) {
+    headers['Authorization'] = `Bearer ${user.token}`;
+  }
+  return headers;
 }
