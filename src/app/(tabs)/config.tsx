@@ -1,25 +1,25 @@
-import React, { useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Redirect } from 'expo-router';
+import { useState } from 'react';
 import {
-  StyleSheet,
-  View,
-  ScrollView,
-  Pressable,
   ActivityIndicator,
   Alert,
-  Switch,
+  Pressable,
   RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Redirect } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
 
-import { useAuth } from '@/context/auth-context';
-import { useEvent } from '@/context/event-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui/button';
-import { Spacing, MaxContentWidth } from '@/constants/theme';
+import { MaxContentWidth, Spacing } from '@/constants/theme';
+import { useAuth } from '@/context/auth-context';
+import { useEvent } from '@/context/event-context';
 import { useTheme } from '@/hooks/use-theme';
 
 export default function ConfigScreen() {
@@ -214,7 +214,7 @@ export default function ConfigScreen() {
                 { text: 'Salir', style: 'destructive', onPress: logout },
               ]);
             }}
-            style={styles.logoutBtn}
+            style={{ marginBottom: Spacing.four, borderColor: '#e11d48', borderWidth: 1 }}
           />
 
         </ScrollView>

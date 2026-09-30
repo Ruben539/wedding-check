@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   StyleSheet,
   type PressableProps,
+  type StyleProp,
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
@@ -16,8 +17,8 @@ interface ButtonProps extends PressableProps {
   icon?: string;
   variant?: 'primary' | 'secondary' | 'outline' | 'danger' | 'adminDemo' | 'plannerDemo' | 'dark';
   loading?: boolean;
-  style?: ViewStyle;
-  textStyle?: TextStyle;
+  style?: StyleProp<ViewStyle>;
+  textStyle?: StyleProp<TextStyle>;
   iconRight?: string;
 }
 

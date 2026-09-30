@@ -43,6 +43,63 @@ export default function TimelineScreen() {
 
   const storageKey = `@wedding_check_timing_${selectedEventId || 'default'}`;
 
+  const isDateToday = (dateStr?: string | null): boolean => {
+    if (!dateStr) return false;
+    try {
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const currentMonth = now.getMonth() + 1;
+      const currentDay = now.getDate();
+
+      const isoPart = dateStr.split('T')[0].split(' ')[0];
+      if (isoPart.includes('-')) {
+        const parts = isoPart.split('-').map((p) => parseInt(p, 10));
+        if (parts.length === 3) {
+          return parts[0] === currentYear && parts[1] === currentMonth && parts[2] === currentDay;
+        }
+      }
+      if (isoPart.includes('/')) {
+        const parts = isoPart.split('/').map((p) => parseInt(p, 10));
+        if (parts.length === 3) {
+          return parts[2] === currentYear && parts[1] === currentMonth && parts[0] === currentDay;
+        }
+      }
+      const parsed = new Date(dateStr);
+      if (!isNaN(parsed.getTime())) {
+        return (
+          parsed.getFullYear() === currentYear &&
+          parsed.getMonth() + 1 === currentMonth &&
+          parsed.getDate() === currentDay
+        );
+      }
+    } catch {
+      return false;
+    }
+    return false;
+  };
+
+  const isEventToday = useMemo(() => {
+    return isDateToday(selectedEvent?.event_date);
+  }, [selectedEvent?.event_date]);
+
+  const formattedEventDate = useMemo(() => {
+    if (!selectedEvent?.event_date) return null;
+    try {
+      const raw = selectedEvent.event_date.split('T')[0].split(' ')[0];
+      const parts = raw.split('-');
+      if (parts.length === 3) {
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1;
+        const day = parseInt(parts[2], 10);
+        const d = new Date(year, month, day);
+        return d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      }
+      return selectedEvent.event_date;
+    } catch {
+      return selectedEvent.event_date;
+    }
+  }, [selectedEvent?.event_date]);
+
   // Actualizar reloj en tiempo real cada 30 segundos
   useEffect(() => {
     const updateTime = () => {
@@ -174,6 +231,15 @@ export default function TimelineScreen() {
 
   // Alternar estado completado de un hito en el backend en tiempo real
   const toggleMilestone = async (id: string) => {
+    if (!isEventToday) {
+      Alert.alert(
+        'Modo Solo Lectura',
+        `El cronograma solo puede marcarse como cumplido el día del evento (${formattedEventDate || 'fecha programada'}).\n\nActualmente te encuentras en modo de consulta.`,
+        [{ text: 'Entendido' }]
+      );
+      return;
+    }
+
     // Actualización optimista inmediata en la UI
     const updated = timeline.map((item) =>
       item.id === id ? { ...item, completed: !item.completed } : item
@@ -229,24 +295,6 @@ export default function TimelineScreen() {
     });
   };
 
-  // Formato legible de fecha del evento
-  const formattedEventDate = useMemo(() => {
-    if (!selectedEvent?.event_date) return null;
-    try {
-      const parts = selectedEvent.event_date.split('-');
-      if (parts.length === 3) {
-        const year = parseInt(parts[0], 10);
-        const month = parseInt(parts[1], 10) - 1;
-        const day = parseInt(parts[2], 10);
-        const d = new Date(year, month, day);
-        return d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-      }
-      return selectedEvent.event_date;
-    } catch {
-      return selectedEvent.event_date;
-    }
-  }, [selectedEvent?.event_date]);
-
   // Próximo hito pendiente
   const nextMilestone = useMemo(() => {
     return timeline.find((item) => !item.completed) || null;
@@ -272,6 +320,14 @@ export default function TimelineScreen() {
                   💍 {selectedEvent ? (selectedEvent.couple_names || selectedEvent.title).toUpperCase() : 'BODA'}
                 </ThemedText>
               </View>
+
+              {!isEventToday && (
+                <View style={styles.readOnlyHeaderBadge}>
+                  <ThemedText style={styles.readOnlyHeaderBadgeText}>
+                    🔒 MODO CONSULTA
+                  </ThemedText>
+                </View>
+              )}
 
               {/* Indicador de Estado de Conexión con el Back */}
               <View style={styles.syncBadge}>
@@ -319,6 +375,25 @@ export default function TimelineScreen() {
               tintColor="#e11d48"
             />
           }>
+
+          {/* Banner Informativo de Modo Solo Lectura si no es la fecha del evento */}
+          {!isEventToday && (
+            <View style={styles.readOnlyNoticeBox}>
+              <Ionicons name="information-circle" size={22} color="#b45309" />
+              <View style={styles.readOnlyNoticeContent}>
+                <ThemedText style={styles.readOnlyNoticeTitle}>
+                  Modo de Solo Lectura (Consulta)
+                </ThemedText>
+                <ThemedText style={styles.readOnlyNoticeDesc}>
+                  Este evento está programado para el{' '}
+                  <ThemedText style={styles.readOnlyNoticeDate}>
+                    {formattedEventDate || selectedEvent?.event_date || 'otra fecha'}
+                  </ThemedText>
+                  . El seguimiento y marcado de hitos cumplidos en tiempo real se habilitarán el día del evento.
+                </ThemedText>
+              </View>
+            </View>
+          )}
 
           {/* Ficha Informativa del Evento desde el Backend */}
           {selectedEvent && (
@@ -419,7 +494,9 @@ export default function TimelineScreen() {
                 <ThemedText style={styles.sectionTitle}>
                   HITOS PROGRAMADOS ({timeline.length})
                 </ThemedText>
-                <ThemedText style={styles.sectionSub}>Toca para marcar cumplido</ThemedText>
+                <ThemedText style={styles.sectionSub}>
+                  {isEventToday ? 'Toca para marcar cumplido' : 'Solo lectura · Día del evento'}
+                </ThemedText>
               </View>
 
               {timeline.map((item, index) => {
@@ -564,6 +641,48 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#e11d48',
     letterSpacing: 0.8,
+  },
+  readOnlyHeaderBadge: {
+    backgroundColor: '#fef3c7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+  },
+  readOnlyHeaderBadgeText: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#b45309',
+    letterSpacing: 0.8,
+  },
+  readOnlyNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fffbeb',
+    borderColor: '#fde68a',
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    gap: 10,
+  },
+  readOnlyNoticeContent: {
+    flex: 1,
+    gap: 2,
+  },
+  readOnlyNoticeTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#92400e',
+  },
+  readOnlyNoticeDesc: {
+    fontSize: 12,
+    color: '#78350f',
+    lineHeight: 16,
+  },
+  readOnlyNoticeDate: {
+    fontWeight: '800',
+    color: '#92400e',
   },
   syncBadge: {
     flexDirection: 'row',

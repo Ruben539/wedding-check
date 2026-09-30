@@ -24,17 +24,17 @@
       "favicon": "./assets/images/icon.png"
     },
     "splash": {
-      "image": "./assets/images/splash-icon.png",
+      "image": "./assets/images/splash.png",
       "resizeMode": "cover",
-      "backgroundColor": "#1A000B"
+      "backgroundColor": "#F0DDE7"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#1A000B",
-          "image": "./assets/images/splash-icon.png",
+          "backgroundColor": "#F0DDE7",
+          "image": "./assets/images/splash.png",
           "resizeMode": "cover"
         }
       ]

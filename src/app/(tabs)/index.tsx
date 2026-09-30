@@ -1,32 +1,32 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Redirect } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  StyleSheet,
-  View,
-  ScrollView,
-  Pressable,
-  TextInput,
   ActivityIndicator,
   Alert,
-  RefreshControl,
+  Linking,
   Modal,
   Platform,
-  Linking,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
   Switch,
+  TextInput,
+  View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Redirect, router } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
 
-import { useAuth, getAuthHeaders } from '@/context/auth-context';
-import { useEvent, EventItem } from '@/context/event-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui/button';
-import { Spacing, MaxContentWidth } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import { MaxContentWidth, Spacing } from '@/constants/theme';
+import { getAuthHeaders, useAuth } from '@/context/auth-context';
+import { useEvent } from '@/context/event-context';
 import { APP_URL } from '@/env';
+import { useTheme } from '@/hooks/use-theme';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 
 interface GuestItem {
@@ -40,6 +40,8 @@ interface GuestItem {
   children?: number;
   table_number?: string | null;
   status: 'pending' | 'confirmed' | 'attended' | 'declined';
+  rsvp_status?: string;
+  will_attend?: boolean;
   dietary_restrictions?: string | null;
   notes?: string | null;
   qr_code?: string;
@@ -53,6 +55,66 @@ export default function DoorReceptionScreen() {
   const { events, selectedEvent, selectedEventId, setSelectedEventId, refreshEvents } = useEvent();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+
+  const currentEvent = selectedEvent || events.find((e) => e.id === selectedEventId) || events[0];
+
+  const isEventToday = useMemo(() => {
+    if (!currentEvent?.event_date) return false;
+    try {
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const currentMonth = now.getMonth() + 1;
+      const currentDay = now.getDate();
+
+      const isoPart = currentEvent.event_date.split('T')[0].split(' ')[0];
+      if (isoPart.includes('-')) {
+        const parts = isoPart.split('-').map((p) => parseInt(p, 10));
+        if (parts.length === 3) {
+          return parts[0] === currentYear && parts[1] === currentMonth && parts[2] === currentDay;
+        }
+      }
+      if (isoPart.includes('/')) {
+        const parts = isoPart.split('/').map((p) => parseInt(p, 10));
+        if (parts.length === 3) {
+          return parts[2] === currentYear && parts[1] === currentMonth && parts[0] === currentDay;
+        }
+      }
+      const parsed = new Date(currentEvent.event_date);
+      if (!isNaN(parsed.getTime())) {
+        return (
+          parsed.getFullYear() === currentYear &&
+          parsed.getMonth() + 1 === currentMonth &&
+          parsed.getDate() === currentDay
+        );
+      }
+    } catch {
+      return false;
+    }
+    return false;
+  }, [currentEvent?.event_date]);
+
+  const formattedEventDate = useMemo(() => {
+    if (!currentEvent?.event_date) return '';
+    const dateStr = currentEvent.event_date;
+    const isoPart = dateStr.split('T')[0].split(' ')[0];
+    const months = [
+      'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+    ];
+    if (isoPart.includes('-')) {
+      const parts = isoPart.split('-').map((p) => parseInt(p, 10));
+      if (parts.length === 3) {
+        return `${parts[2]} de ${months[parts[1] - 1] || parts[1]} de ${parts[0]}`;
+      }
+    }
+    if (isoPart.includes('/')) {
+      const parts = isoPart.split('/').map((p) => parseInt(p, 10));
+      if (parts.length === 3) {
+        return `${parts[0]} de ${months[parts[1] - 1] || parts[1]} de ${parts[2]}`;
+      }
+    }
+    return dateStr;
+  }, [currentEvent?.event_date]);
 
   const [guests, setGuests] = useState<GuestItem[]>([]);
   const [loadingData, setLoadingData] = useState<boolean>(false);
@@ -204,6 +266,15 @@ export default function DoorReceptionScreen() {
 
   // Marcar / Alternar Acreditación (Check-in en Puerta)
   const toggleCheckIn = async (guest: GuestItem) => {
+    if (!isEventToday) {
+      Alert.alert(
+        'Modo Solo Lectura',
+        `No es posible registrar el ingreso porque el evento es el ${formattedEventDate || 'fecha programada'}. Las acciones de acreditación se habilitan únicamente el día del evento.`,
+        [{ text: 'Entendido' }]
+      );
+      return;
+    }
+
     const isAttending = guest.status === 'attended';
     const newStatus = isAttending ? 'confirmed' : 'attended';
     const now = new Date();
@@ -215,10 +286,10 @@ export default function DoorReceptionScreen() {
       prev.map((g) =>
         g.id === guest.id
           ? {
-              ...g,
-              status: newStatus,
-              attended_at: newStatus === 'attended' ? timestamp : null,
-            }
+            ...g,
+            status: newStatus,
+            attended_at: newStatus === 'attended' ? timestamp : null,
+          }
           : g
       )
     );
@@ -241,6 +312,15 @@ export default function DoorReceptionScreen() {
 
   // Escanear / Validar QR con API Backend
   const handleScanQR = async (codeToScan?: string) => {
+    if (!isEventToday) {
+      Alert.alert(
+        'Acreditación No Disponible',
+        `El escaneo y validación de entradas solo está habilitado el día del evento (${formattedEventDate || 'fecha programada'}).`,
+        [{ text: 'Entendido' }]
+      );
+      return;
+    }
+
     const rawQuery = (codeToScan || qrInput).trim();
     if (!rawQuery) return;
 
@@ -376,6 +456,15 @@ export default function DoorReceptionScreen() {
 
   // Alta Express de Invitados en Puerta
   const handleCreateExpressGuest = async () => {
+    if (!isEventToday) {
+      Alert.alert(
+        'Modo Solo Lectura',
+        `El alta express de invitados en puerta solo está habilitada el día del evento (${formattedEventDate || 'fecha programada'}).`,
+        [{ text: 'Entendido' }]
+      );
+      return;
+    }
+
     if (!expressName.trim()) {
       Alert.alert('Nombre requerido', 'Por favor ingresá el nombre y apellido del invitado.');
       return;
@@ -524,9 +613,39 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
     });
   };
 
-  // Lista de invitados que CONFIRMARON antes de la fecha de vencimiento (Filtrado estricto de puerta)
+  const getGuestPasses = (g: any): number => {
+    if (typeof g.confirmed_passes === 'number') {
+      return Math.max(0, g.confirmed_passes);
+    }
+    if (typeof g.passes === 'number') {
+      return Math.max(0, g.passes);
+    }
+    return 1;
+  };
+
+  const isGuestAttending = (g: any): boolean => {
+    // 1. Excluir explícitamente a los que declinaron o cancelaron
+    if (g.status === 'declined' || g.rsvp_status === 'declined') return false;
+    if (g.status === 'cancelled' || g.status === 'rejected' || g.status === 'no_asiste') return false;
+    if (g.will_attend === false || g.attendance === false || g.attending === false) return false;
+
+    // 2. Si confirmó 0 pases, no asiste al evento
+    if (typeof g.confirmed_passes === 'number' && g.confirmed_passes <= 0) return false;
+    if (typeof g.passes === 'number' && g.passes <= 0 && g.confirmed_passes === undefined) return false;
+
+    // 3. No incluir pendientes de confirmación en la acreditación de puerta
+    if (g.status === 'pending' || g.rsvp_status === 'pending_rsvp') return false;
+
+    // 4. Debe tener estado de asistencia confirmada o que ya ingresó
+    const isConfirmed = g.status === 'confirmed' || g.rsvp_status === 'confirmed';
+    const isAttended = g.status === 'attended';
+
+    return isConfirmed || isAttended;
+  };
+
+  // Lista de invitados que CONFIRMARON y ASISTIRÁN al evento
   const preConfirmedGuests = useMemo(() => {
-    return guests.filter((g) => g.status === 'confirmed' || g.status === 'attended');
+    return guests.filter((g) => isGuestAttending(g));
   }, [guests]);
 
   // Filtrado en tiempo real en la lista de recepción
@@ -541,7 +660,7 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
       if (!matchQuery) return false;
 
       if (filterStatus === 'attended') return g.status === 'attended';
-      if (filterStatus === 'pending') return g.status === 'confirmed';
+      if (filterStatus === 'pending') return g.status !== 'attended';
       return true;
     });
   }, [preConfirmedGuests, searchQuery, filterStatus]);
@@ -563,17 +682,17 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
     return Object.keys(tableGroups).filter((t) => t !== 'Sin Mesa Asignada');
   }, [tableGroups]);
 
-  // Cálculo de Métricas de Puerta en Vivo (Día del Evento - Solo Confirmados)
+  // Cálculo de Métricas de Puerta en Vivo (Día del Evento - Solo Invitados que Asistirán)
   const stats = useMemo(() => {
     const total = preConfirmedGuests.length;
     const attended = preConfirmedGuests.filter((g) => g.status === 'attended').length;
-    const pendingEntrance = total - attended;
+    const pendingEntrance = Math.max(0, total - attended);
 
-    const totalPasses = preConfirmedGuests.reduce((acc, g) => acc + (g.confirmed_passes || g.passes || 1), 0);
+    const totalPasses = preConfirmedGuests.reduce((acc, g) => acc + getGuestPasses(g), 0);
     const attendedPasses = preConfirmedGuests
       .filter((g) => g.status === 'attended')
-      .reduce((acc, g) => acc + (g.confirmed_passes || g.passes || 1), 0);
-    const pendingEntrancePasses = totalPasses - attendedPasses;
+      .reduce((acc, g) => acc + getGuestPasses(g), 0);
+    const pendingEntrancePasses = Math.max(0, totalPasses - attendedPasses);
 
     const progressPercent = total > 0 ? Math.round((attended / total) * 100) : 0;
 
@@ -622,20 +741,26 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
     return <Redirect href="/login" />;
   }
 
-  const currentEvent = events.find((e) => e.id === selectedEventId) || events[0];
-
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        
+
         {/* Header Superior */}
         <View style={styles.headerBar}>
           <View style={styles.headerTitleCol}>
-            <View style={styles.todayHeaderBadge}>
-              <ThemedText style={styles.todayHeaderBadgeText}>
-                📅 EVENTO DE HOY · {getTodayFormattedLabel()}
-              </ThemedText>
-            </View>
+            {isEventToday ? (
+              <View style={styles.todayHeaderBadge}>
+                <ThemedText style={styles.todayHeaderBadgeText}>
+                  📅 EVENTO DE HOY · {getTodayFormattedLabel()}
+                </ThemedText>
+              </View>
+            ) : (
+              <View style={[styles.todayHeaderBadge, styles.readOnlyHeaderBadge]}>
+                <ThemedText style={styles.readOnlyHeaderBadgeText}>
+                  🔒 MODO CONSULTA · {formattedEventDate || currentEvent?.event_date}
+                </ThemedText>
+              </View>
+            )}
             <ThemedText type="subtitle" style={styles.headerTitle}>
               {currentEvent ? currentEvent.title : 'Recepción de Invitados'}
             </ThemedText>
@@ -654,20 +779,53 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={['#e11d48']} />
           }>
-          
+
+          {/* Banner Informativo si no es la fecha del evento */}
+          {!isEventToday && (
+            <View style={styles.readOnlyNoticeBox}>
+              <Ionicons name="information-circle" size={22} color="#b45309" />
+              <View style={styles.readOnlyNoticeContent}>
+                <ThemedText style={styles.readOnlyNoticeTitle}>
+                  Modo de Solo Lectura (Consulta)
+                </ThemedText>
+                <ThemedText style={styles.readOnlyNoticeDesc}>
+                  Este evento es el <ThemedText style={styles.readOnlyNoticeDate}>{formattedEventDate || currentEvent?.event_date || 'otra fecha'}</ThemedText>. La acreditación y el registro de ingresos se habilitarán el día del evento.
+                </ThemedText>
+              </View>
+            </View>
+          )}
+
           {/* Botón Principal Adaptable de Escáner QR de Ingreso */}
-          <Pressable onPress={() => setScannerVisible(true)} style={styles.heroQrButton}>
+          <Pressable
+            onPress={() => {
+              if (!isEventToday) {
+                Alert.alert(
+                  'Acreditación No Habilitada',
+                  `El escaneo de entradas y acreditación en puerta solo están habilitados el día del evento (${formattedEventDate || 'fecha programada'}).\n\nActualmente puedes consultar la información en modo de solo lectura.`,
+                  [{ text: 'Entendido' }]
+                );
+                return;
+              }
+              setScannerVisible(true);
+            }}
+            style={styles.heroQrButton}>
             <LinearGradient
-              colors={['#FF0055', '#E61E50', '#F97316']}
+              colors={isEventToday ? ['#FF0055', '#E61E50', '#F97316'] : ['#475569', '#334155', '#1e293b']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.heroQrGradient}>
-              <ThemedText style={styles.heroQrIcon}>🎟️</ThemedText>
+              <ThemedText style={styles.heroQrIcon}>{isEventToday ? '🎟️' : '🔒'}</ThemedText>
               <View style={styles.heroQrCol}>
-                <ThemedText style={styles.heroQrTitle}>ESCANEAR CÓDIGO QR</ThemedText>
-                <ThemedText style={styles.heroQrSub}>Validar y acreditar ingreso de invitados</ThemedText>
+                <ThemedText style={styles.heroQrTitle}>
+                  {isEventToday ? 'ESCANEAR CÓDIGO QR' : 'ACREDITACIÓN BLOQUEADA (SOLO LECTURA)'}
+                </ThemedText>
+                <ThemedText style={styles.heroQrSub}>
+                  {isEventToday
+                    ? 'Validar y acreditar ingreso de invitados'
+                    : `Habilitado únicamente el día del evento (${formattedEventDate})`}
+                </ThemedText>
               </View>
-              <ThemedText style={styles.heroQrArrow}>➔</ThemedText>
+              <ThemedText style={styles.heroQrArrow}>{isEventToday ? '➔' : 'ℹ️'}</ThemedText>
             </LinearGradient>
           </Pressable>
 
@@ -706,7 +864,7 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
                 {stats.total}
               </ThemedText>
               <ThemedText style={styles.statLabelDark}>
-                👥 TOTAL INVITADOS
+                👥 TOTAL CONFIRMADOS
               </ThemedText>
               <ThemedText style={styles.statSubDark}>
                 {stats.totalPasses} pases esperados
@@ -718,10 +876,10 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
           <View style={styles.progressCard}>
             <View style={styles.progressHeaderRow}>
               <ThemedText style={styles.progressTitle}>
-                ⏱️ {stats.attended} de {stats.total} invitados ya ingresaron al evento ({stats.progressPercent}%)
+                ⏱️ {stats.attended} de {stats.total} confirmados ingresaron ({stats.progressPercent}%)
               </ThemedText>
               <ThemedText style={styles.progressSubText}>
-                {stats.pendingEntrance} pendientes por llegar
+                {stats.pendingEntrance} por llegar
               </ThemedText>
             </View>
             <View style={styles.progressBarTrack}>
@@ -778,7 +936,7 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
                   style={styles.kitchenShareGradient}>
                   <Ionicons name="logo-whatsapp" size={17} color="#ffffff" />
                   <ThemedText style={styles.kitchenShareTitle}>
-                    ENVIAR REPORTE A COCINA / MAÎTRE
+                    ENVIAR REPORTE A COCINA
                   </ThemedText>
                 </LinearGradient>
               </Pressable>
@@ -810,25 +968,40 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
               <View style={styles.searchSection}>
                 <View style={styles.searchRowWithExpress}>
                   <View style={styles.searchInputWrapper}>
-                    <ThemedText style={styles.searchIcon}>🔍</ThemedText>
+                    <Ionicons name="search" size={20} color="#64748b" style={styles.searchIcon} />
                     <TextInput
                       style={styles.searchInput}
-                      placeholder="Buscar por nombre, código QR o mesa..."
-                      placeholderTextColor="#64748b"
+                      placeholder="Buscar por nombre, mesa o QR..."
+                      placeholderTextColor="#94a3b8"
                       value={searchQuery}
                       onChangeText={setSearchQuery}
                       autoCapitalize="none"
+                      autoCorrect={false}
+                      selectionColor="#e11d48"
                     />
                     {searchQuery.length > 0 && (
-                      <Pressable onPress={() => setSearchQuery('')} style={styles.clearBtn}>
-                        <ThemedText style={styles.clearText}>✕</ThemedText>
+                      <Pressable
+                        onPress={() => setSearchQuery('')}
+                        hitSlop={8}
+                        style={styles.clearBtn}>
+                        <Ionicons name="close-circle" size={19} color="#94a3b8" />
                       </Pressable>
                     )}
                   </View>
 
                   <Pressable
-                    onPress={() => setExpressModalVisible(true)}
-                    style={styles.expressBtn}>
+                    onPress={() => {
+                      if (!isEventToday) {
+                        Alert.alert(
+                          'Modo Solo Lectura',
+                          `El alta express de invitados en puerta solo está habilitada el día del evento (${formattedEventDate || 'fecha programada'}).`,
+                          [{ text: 'Entendido' }]
+                        );
+                        return;
+                      }
+                      setExpressModalVisible(true);
+                    }}
+                    style={[styles.expressBtn, !isEventToday && { opacity: 0.6 }]}>
                     <Ionicons name="person-add" size={15} color="#ffffff" />
                     <ThemedText style={styles.expressBtnText}>+ Express</ThemedText>
                   </Pressable>
@@ -840,7 +1013,7 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
                     onPress={() => setFilterStatus('all')}
                     style={[styles.pill, filterStatus === 'all' && styles.pillActive]}>
                     <ThemedText style={[styles.pillText, filterStatus === 'all' && styles.pillTextActive]}>
-                      Todos ({guests.length})
+                      Todos ({preConfirmedGuests.length})
                     </ThemedText>
                   </Pressable>
 
@@ -888,7 +1061,7 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
                           styles.guestCard,
                           isAttended && styles.guestCardAttended,
                         ]}>
-                        
+
                         <View style={styles.guestInfoCol}>
                           <View style={styles.guestNameRow}>
                             <ThemedText style={styles.guestName}>
@@ -902,7 +1075,7 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
                                 </ThemedText>
                               </View>
                             )}
-                            
+
                             {isAttended ? (
                               <View style={styles.attendedBadge}>
                                 <ThemedText style={styles.attendedBadgeText}>
@@ -933,7 +1106,7 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
 
                             <View style={styles.passesBadgeSubtle}>
                               <ThemedText style={styles.passesTextSubtle}>
-                                🎟️ {guest.confirmed_passes || guest.passes} pases · {guest.qr_code}
+                                🎟️ {getGuestPasses(guest)} pases · {guest.qr_code}
                               </ThemedText>
                             </View>
                           </View>
@@ -957,17 +1130,33 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
                           disabled={isUpdating}
                           onPress={(e) => {
                             e.stopPropagation();
+                            if (!isEventToday) {
+                              Alert.alert(
+                                'Modo Solo Lectura',
+                                `No se puede marcar el ingreso porque el evento es el ${formattedEventDate || 'fecha programada'}. Las acciones de acreditación se habilitan el día del evento.`,
+                                [{ text: 'Entendido' }]
+                              );
+                              return;
+                            }
                             setConfirmToggleGuest(guest);
                           }}
                           style={[
                             styles.checkInBtn,
-                            isAttended ? styles.checkInBtnActive : styles.checkInBtnPending,
+                            isAttended
+                              ? styles.checkInBtnActive
+                              : isEventToday
+                              ? styles.checkInBtnPending
+                              : styles.checkInBtnReadOnly,
                           ]}>
                           {isUpdating ? (
                             <ActivityIndicator color="#ffffff" size="small" />
                           ) : (
-                            <ThemedText style={styles.checkInBtnText}>
-                              {isAttended ? '✅ DENTRO' : '🟢 INGRESAR'}
+                            <ThemedText
+                              style={[
+                                styles.checkInBtnText,
+                                !isAttended && !isEventToday && styles.checkInBtnTextReadOnly,
+                              ]}>
+                              {isAttended ? '✅ DENTRO' : isEventToday ? '🟢 INGRESAR' : '⏳ PENDIENTE'}
                             </ThemedText>
                           )}
                         </Pressable>
@@ -987,7 +1176,7 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
 
               {Object.entries(tableGroups).map(([tableName, tableGuests]) => {
                 const attendedInTable = tableGuests.filter((g) => g.status === 'attended').length;
-                const totalInTable = tableGuests.reduce((acc, g) => acc + (g.confirmed_passes || g.passes || 1), 0);
+                const totalInTable = tableGuests.reduce((acc, g) => acc + getGuestPasses(g), 0);
 
                 return (
                   <View key={tableName} style={styles.tableCardContainer}>
@@ -1000,7 +1189,7 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
                           {tableGuests.length} familias/invitados ({totalInTable} personas)
                         </ThemedText>
                       </View>
-                      
+
                       <View style={styles.tableCountBadge}>
                         <ThemedText style={styles.tableCountText}>
                           {attendedInTable} / {tableGuests.length} en mesa
@@ -1022,7 +1211,7 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
                               </ThemedText>
                             ) : null}
                             <ThemedText style={styles.tablePassesText}>
-                              {g.confirmed_passes || g.passes} pases
+                              {getGuestPasses(g)} pases
                             </ThemedText>
                           </View>
                         </View>
@@ -1067,9 +1256,9 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
                 scanned
                   ? undefined
                   : ({ data }) => {
-                      setScanned(true);
-                      handleScanQR(data);
-                    }
+                    setScanned(true);
+                    handleScanQR(data);
+                  }
               }
             />
           )}
@@ -1195,8 +1384,8 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
                     <ThemedText style={styles.registeredGridValProminent}>
                       {scanResult.guest.table_number
                         ? (scanResult.guest.table_number.toLowerCase().includes('mesa')
-                            ? scanResult.guest.table_number
-                            : `Mesa ${scanResult.guest.table_number}`)
+                          ? scanResult.guest.table_number
+                          : `Mesa ${scanResult.guest.table_number}`)
                         : 'Sin Mesa Asignada'}
                     </ThemedText>
                   </View>
@@ -1308,8 +1497,8 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
                     <ThemedText style={styles.alreadyUsedGridValProminent}>
                       {alreadyUsedResult.guest.table_number
                         ? (alreadyUsedResult.guest.table_number.toLowerCase().includes('mesa')
-                            ? alreadyUsedResult.guest.table_number
-                            : `Mesa ${alreadyUsedResult.guest.table_number}`)
+                          ? alreadyUsedResult.guest.table_number
+                          : `Mesa ${alreadyUsedResult.guest.table_number}`)
                         : 'Sin Mesa Asignada'}
                     </ThemedText>
                   </View>
@@ -1811,6 +2000,45 @@ const styles = StyleSheet.create({
     color: '#e11d48',
     letterSpacing: 0.8,
   },
+  readOnlyHeaderBadge: {
+    backgroundColor: '#fef3c7',
+    borderColor: '#fde68a',
+  },
+  readOnlyHeaderBadgeText: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#b45309',
+    letterSpacing: 0.8,
+  },
+  readOnlyNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fffbeb',
+    borderColor: '#fde68a',
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: Spacing.four,
+    gap: 10,
+  },
+  readOnlyNoticeContent: {
+    flex: 1,
+    gap: 2,
+  },
+  readOnlyNoticeTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#92400e',
+  },
+  readOnlyNoticeDesc: {
+    fontSize: 12,
+    color: '#78350f',
+    lineHeight: 16,
+  },
+  readOnlyNoticeDate: {
+    fontWeight: '800',
+    color: '#92400e',
+  },
   headerSubtitle: {
     fontSize: 10,
     fontWeight: '800',
@@ -2112,6 +2340,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   searchInputWrapper: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#ffffff',
@@ -2119,25 +2348,23 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#cbd5e1',
     paddingHorizontal: 14,
-    height: 50,
+    height: 52,
   },
   searchIcon: {
-    fontSize: 16,
     marginRight: 8,
   },
   searchInput: {
     flex: 1,
-    fontSize: 15,
-    color: '#000000',
+    height: '100%',
+    paddingVertical: 0,
+    fontSize: 16,
+    color: '#0f172a',
     fontWeight: '600',
   },
   clearBtn: {
     padding: 4,
-  },
-  clearText: {
-    color: '#94a3b8',
-    fontSize: 14,
-    fontWeight: '700',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   filterPills: {
     gap: 8,
@@ -2286,6 +2513,15 @@ const styles = StyleSheet.create({
   },
   checkInBtnActive: {
     backgroundColor: '#10b981',
+  },
+  checkInBtnReadOnly: {
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  checkInBtnTextReadOnly: {
+    color: '#64748b',
+    fontWeight: '700',
   },
   checkInBtnText: {
     color: '#ffffff',
@@ -3178,15 +3414,17 @@ const styles = StyleSheet.create({
   searchRowWithExpress: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    width: '100%',
+    gap: 10,
   },
   expressBtn: {
+    height: 52,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 5,
     backgroundColor: '#e11d48',
     paddingHorizontal: 14,
-    paddingVertical: 12,
     borderRadius: 14,
     shadowColor: '#e11d48',
     shadowOffset: { width: 0, height: 2 },
@@ -3253,12 +3491,12 @@ const styles = StyleSheet.create({
 
   /* Reasignación de Mesa */
   tableBadgeProminentClickable: {
-    backgroundColor: '#fff1f2',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
+    backgroundColor: '#0f172a',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#fecdd3',
+    borderColor: '#334155',
   },
   reassignBtnPill: {
     backgroundColor: '#fff1f2',
