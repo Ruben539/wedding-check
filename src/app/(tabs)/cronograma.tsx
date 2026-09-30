@@ -14,7 +14,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { APP_URL } from '@/env';
+import { APP_URL, SKIP_EVENT_DATE_CHECK } from '@/env';
 import { useAuth, getAuthHeaders } from '@/context/auth-context';
 import { useEvent } from '@/context/event-context';
 import { ThemedText } from '@/components/themed-text';
@@ -79,6 +79,7 @@ export default function TimelineScreen() {
   };
 
   const isEventToday = useMemo(() => {
+    if (SKIP_EVENT_DATE_CHECK) return true;
     return isDateToday(selectedEvent?.event_date);
   }, [selectedEvent?.event_date]);
 

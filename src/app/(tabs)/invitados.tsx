@@ -530,7 +530,7 @@ export default function GuestListRSVPScreen() {
                           ) : null}
                         </View>
 
-                        {!isConfirmed && (
+                        {!isConfirmed && !isDeclined && (
                           <Pressable
                             onPress={() => sendWhatsAppReminder(guest)}
                             style={styles.reminderBtn}>

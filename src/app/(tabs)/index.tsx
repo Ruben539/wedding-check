@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Redirect } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,6 +14,7 @@ import {
   StyleSheet,
   Switch,
   TextInput,
+  Vibration,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,10 +25,12 @@ import { Button } from '@/components/ui/button';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { getAuthHeaders, useAuth } from '@/context/auth-context';
 import { useEvent } from '@/context/event-context';
-import { APP_URL } from '@/env';
+import { fetchWithTimeout, useSync } from '@/context/sync-context';
+import { APP_URL, SKIP_EVENT_DATE_CHECK } from '@/env';
 import { useTheme } from '@/hooks/use-theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as Network from 'expo-network';
 
 interface GuestItem {
   id: number | string;
@@ -50,15 +53,28 @@ interface GuestItem {
   vip_label?: string;
 }
 
+// Vibración al escanear: se usa el vibrador del teléfono porque el Taptic Engine de iOS
+// se desactiva mientras la cámara está activa
+const vibrateScan = (type: 'success' | 'warning' | 'error') => {
+  if (type === 'success') {
+    Vibration.vibrate(Platform.OS === 'ios' ? undefined : 200);
+  } else {
+    // Doble vibración para advertencias y errores
+    Vibration.vibrate(Platform.OS === 'ios' ? [0, 250] : [0, 150, 120, 150]);
+  }
+};
+
 export default function DoorReceptionScreen() {
   const { user, logout, isLoading: authLoading } = useAuth();
   const { events, selectedEvent, selectedEventId, setSelectedEventId, refreshEvents } = useEvent();
+  const { pendingOps, isSyncing, syncVersion, sendOrQueue, flush, applyPendingOps } = useSync();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
 
   const currentEvent = selectedEvent || events.find((e) => e.id === selectedEventId) || events[0];
 
   const isEventToday = useMemo(() => {
+    if (SKIP_EVENT_DATE_CHECK) return true;
     if (!currentEvent?.event_date) return false;
     try {
       const now = new Date();
@@ -126,6 +142,8 @@ export default function DoorReceptionScreen() {
   // Modales
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState<boolean>(false);
+  // Bloqueo inmediato para evitar lecturas duplicadas del mismo QR antes de que React re-renderice
+  const scanLockRef = useRef<boolean>(false);
   const [scannerVisible, setScannerVisible] = useState<boolean>(false);
   const [torchEnabled, setTorchEnabled] = useState<boolean>(false);
   const [qrInput, setQrInput] = useState<string>('');
@@ -157,7 +175,26 @@ export default function DoorReceptionScreen() {
     if (user && selectedEventId) {
       fetchGuestsForEvent(selectedEventId);
     }
-  }, [user, selectedEventId]);
+  }, [user, selectedEventId, syncVersion]);
+
+  // Vibrar según el resultado del escaneo
+  useEffect(() => {
+    if (scanResult) vibrateScan('success');
+  }, [scanResult]);
+
+  useEffect(() => {
+    if (alreadyUsedResult) vibrateScan('warning');
+  }, [alreadyUsedResult]);
+
+  // Liberar el bloqueo del escáner cuando se habilita la siguiente lectura
+  useEffect(() => {
+    if (!scanned) scanLockRef.current = false;
+  }, [scanned]);
+
+  const pendingCountForEvent = useMemo(
+    () => pendingOps.filter((op) => op.eventId === selectedEventId).length,
+    [pendingOps, selectedEventId]
+  );
 
   const formatDisplayTime = (rawTime?: string | null): string => {
     if (!rawTime) {
@@ -212,7 +249,7 @@ export default function DoorReceptionScreen() {
       const cached = await AsyncStorage.getItem(storageKey);
       if (cached) {
         try {
-          setGuests(JSON.parse(cached));
+          setGuests(applyPendingOps(JSON.parse(cached), eventId));
         } catch {
           // ignore
         }
@@ -221,7 +258,7 @@ export default function DoorReceptionScreen() {
       }
 
       const headers = getAuthHeaders(user);
-      const res = await fetch(`${APP_URL}/events/${eventId}/guests`, {
+      const res = await fetchWithTimeout(`${APP_URL}/events/${eventId}/guests`, {
         headers,
       });
       if (res.ok) {
@@ -231,7 +268,7 @@ export default function DoorReceptionScreen() {
           ...g,
           qr_code: g.qr_code || `WC-${String(g.id).padStart(4, '0')}`,
         }));
-        setGuests(list);
+        setGuests(applyPendingOps(list, eventId));
         await AsyncStorage.setItem(storageKey, JSON.stringify(list));
       } else {
         if (!cached) {
@@ -243,7 +280,7 @@ export default function DoorReceptionScreen() {
       try {
         const cached = await AsyncStorage.getItem(storageKey);
         if (cached) {
-          setGuests(JSON.parse(cached));
+          setGuests(applyPendingOps(JSON.parse(cached), eventId));
         } else {
           setGuests([]);
         }
@@ -275,6 +312,8 @@ export default function DoorReceptionScreen() {
       return;
     }
 
+    if (!selectedEventId) return;
+
     const isAttending = guest.status === 'attended';
     const newStatus = isAttending ? 'confirmed' : 'attended';
     const now = new Date();
@@ -295,16 +334,18 @@ export default function DoorReceptionScreen() {
     );
 
     try {
-      const headers = getAuthHeaders(user, {
-        'Content-Type': 'application/json',
-      });
-      await fetch(`${APP_URL}/guests/${guest.id}`, {
+      const result = await sendOrQueue({
+        eventId: selectedEventId,
         method: 'PUT',
-        headers,
-        body: JSON.stringify({ status: newStatus }),
+        path: `/guests/${guest.id}`,
+        body: { status: newStatus },
+        guestId: guest.id,
+        patch: { status: newStatus, attended_at: newStatus === 'attended' ? timestamp : null },
       });
-    } catch {
-      // Manejar sin romper flujo de interfaz
+      if (result.status === 'rejected') {
+        Alert.alert('No se pudo guardar', `El servidor rechazó el cambio de estado de "${guest.name}".`);
+        fetchGuestsForEvent(selectedEventId);
+      }
     } finally {
       setUpdatingGuestId(null);
     }
@@ -313,16 +354,20 @@ export default function DoorReceptionScreen() {
   // Escanear / Validar QR con API Backend
   const handleScanQR = async (codeToScan?: string) => {
     if (!isEventToday) {
+      vibrateScan('error');
       Alert.alert(
         'Acreditación No Disponible',
         `El escaneo y validación de entradas solo está habilitado el día del evento (${formattedEventDate || 'fecha programada'}).`,
-        [{ text: 'Entendido' }]
+        [{ text: 'Entendido', onPress: () => setScanned(false) }]
       );
       return;
     }
 
     const rawQuery = (codeToScan || qrInput).trim();
-    if (!rawQuery) return;
+    if (!rawQuery) {
+      setScanned(false);
+      return;
+    }
 
     // Extraer token si se escanea URL completa
     let cleanToken = rawQuery;
@@ -330,48 +375,72 @@ export default function DoorReceptionScreen() {
       cleanToken = cleanToken.split('/confirmar/').pop() || cleanToken;
     }
 
-    // Verificar si el invitado no confirmó antes del vencimiento, declinó o ya ingresó
+    // Búsqueda exacta por código QR o ID (nunca por nombre, para no acreditar a otra persona)
     const foundAny = guests.find(
       (g) =>
         (g.qr_code && g.qr_code.toUpperCase() === cleanToken.toUpperCase()) ||
-        g.name.toLowerCase().includes(cleanToken.toLowerCase()) ||
         String(g.id) === cleanToken
     );
 
     const now = new Date();
     const timestamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-    if (foundAny && foundAny.status === 'attended') {
-      setAlreadyUsedResult({
-        guest: foundAny,
-        timestamp: foundAny.attended_at || timestamp,
-      });
-      return;
+    // Validación con la lista guardada en el dispositivo (sin conexión o servidor no disponible)
+    const processLocally = () => {
+      if (!foundAny) {
+        vibrateScan('error');
+        Alert.alert(
+          'Código No Encontrado',
+          `Sin conexión con el servidor. El código '${cleanToken}' no figura en la lista guardada en el dispositivo.`,
+          [{ text: 'Aceptar', onPress: () => setScanned(false) }]
+        );
+      } else if (foundAny.status === 'attended') {
+        setAlreadyUsedResult({
+          guest: foundAny,
+          timestamp: foundAny.attended_at || timestamp,
+        });
+      } else if (foundAny.status === 'pending') {
+        vibrateScan('error');
+        Alert.alert(
+          '⚠️ NO CONFIRMADO A TIEMPO',
+          `El invitado "${foundAny.name}" no confirmó su asistencia antes de la fecha límite de vencimiento (7 días antes).\n\nNo se encuentra en la lista de acreditación para el ingreso de hoy.`,
+          [{ text: 'Entendido', onPress: () => setScanned(false) }]
+        );
+      } else if (foundAny.status === 'declined') {
+        vibrateScan('error');
+        Alert.alert(
+          '🔴 INVITADO DECLINADO',
+          `El invitado "${foundAny.name}" declinó la invitación antes de la fecha de vencimiento.`,
+          [{ text: 'Entendido', onPress: () => setScanned(false) }]
+        );
+      } else {
+        toggleCheckIn(foundAny);
+        setScanResult({
+          guest: { ...foundAny, status: 'attended', attended_at: timestamp },
+          timestamp,
+        });
+      }
+    };
+
+    // Sin conexión: validar directo con la lista guardada, sin esperar al servidor
+    try {
+      const net = await Network.getNetworkStateAsync();
+      if (net.isConnected === false || net.isInternetReachable === false) {
+        processLocally();
+        return;
+      }
+    } catch {
+      // Si no se puede determinar, se intenta con el servidor
     }
 
-    if (foundAny && foundAny.status === 'pending') {
-      Alert.alert(
-        '⚠️ NO CONFIRMADO A TIEMPO',
-        `El invitado "${foundAny.name}" no confirmó su asistencia antes de la fecha límite de vencimiento (7 días antes).\n\nNo se encuentra en la lista de acreditación para el ingreso de hoy.`,
-        [{ text: 'Entendido', onPress: () => setScanned(false) }]
-      );
-      return;
-    }
-
-    if (foundAny && foundAny.status === 'declined') {
-      Alert.alert(
-        '🔴 INVITADO DECLINADO',
-        `El invitado "${foundAny.name}" declinó la invitación antes de la fecha de vencimiento.`,
-        [{ text: 'Entendido', onPress: () => setScanned(false) }]
-      );
-      return;
-    }
-
+    // Con conexión: el servidor es quien decide (la lista local puede estar desactualizada)
+    let res: Response;
+    let json: any;
     try {
       const headers = getAuthHeaders(user, {
         'Content-Type': 'application/json',
       });
-      const res = await fetch(`${APP_URL}/check-in/scan`, {
+      res = await fetchWithTimeout(`${APP_URL}/check-in/scan`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -379,78 +448,55 @@ export default function DoorReceptionScreen() {
           event_id: selectedEventId,
         }),
       });
-
-      const json = await res.json();
-
-      if (res.ok && json.success) {
-        // Entrada Válida
-        const updatedGuest = json.guest;
-        setGuests((prev) =>
-          prev.map((g) => (String(g.id) === String(updatedGuest.id) || g.name === updatedGuest.name ? { ...g, status: 'attended', attended_at: timestamp } : g))
-        );
-        setScanResult({
-          guest: { ...updatedGuest, status: 'attended', attended_at: timestamp },
-          timestamp: timestamp,
-        });
-      } else if (res.status === 409 || json.status === 'already_used' || json.already_attended) {
-        // Pase ya utilizado -> Modal emergente
-        const usedGuest = json.guest || foundAny || { id: 0, name: 'Invitado Registrado', phone: '', passes: 1, table_number: 'Sin Mesa', status: 'attended' };
-        setAlreadyUsedResult({
-          guest: usedGuest,
-          timestamp: usedGuest.attended_at || timestamp,
-        });
-      } else if (res.status === 422 || json.status === 'declined') {
-        // Invitado Cancelado
-        Alert.alert(
-          '⚠️ INVITADO CANCELADO',
-          json.message || 'El invitado figura como No Asistirá.',
-          [{ text: 'Aceptar', onPress: () => setScanned(false) }]
-        );
-      } else {
-        // Buscar localmente como fallback
-        if (foundAny) {
-          if (foundAny.status === 'attended') {
-            setAlreadyUsedResult({
-              guest: foundAny,
-              timestamp: foundAny.attended_at || timestamp,
-            });
-          } else {
-            toggleCheckIn(foundAny);
-            setScanResult({
-              guest: { ...foundAny, status: 'attended', attended_at: foundAny.attended_at || timestamp },
-              timestamp: foundAny.attended_at || timestamp,
-            });
-          }
-        } else {
-          Alert.alert(
-            'Código No Encontrado',
-            json.message || `No se encontró ningún invitado registrado con el código '${cleanToken}'.`,
-            [{ text: 'Aceptar', onPress: () => setScanned(false) }]
-          );
-        }
-      }
+      json = await res.json().catch(() => ({}));
     } catch {
-      // Fallback local
-      if (foundAny) {
-        if (foundAny.status === 'attended') {
-          setAlreadyUsedResult({
-            guest: foundAny,
-            timestamp: foundAny.attended_at || timestamp,
-          });
-        } else {
-          toggleCheckIn(foundAny);
-          setScanResult({
-            guest: { ...foundAny, status: 'attended', attended_at: foundAny.attended_at || timestamp },
-            timestamp: foundAny.attended_at || timestamp,
-          });
-        }
-      } else {
-        Alert.alert(
-          'Error de Conexión',
-          `No se encontró ningún invitado registrado con el código '${cleanToken}'.`,
-          [{ text: 'Aceptar', onPress: () => setScanned(false) }]
-        );
+      processLocally();
+      return;
+    }
+
+    if (res.ok && json.success) {
+      // Entrada Válida
+      const updatedGuest = json.guest || foundAny;
+      if (!updatedGuest) {
+        vibrateScan('success');
+        Alert.alert('✅ Entrada Válida', 'El invitado fue acreditado correctamente.', [
+          { text: 'Aceptar', onPress: () => setScanned(false) },
+        ]);
+        return;
       }
+      setGuests((prev) =>
+        prev.map((g) => (String(g.id) === String(updatedGuest.id) ? { ...g, status: 'attended', attended_at: timestamp } : g))
+      );
+      setScanResult({
+        guest: { ...updatedGuest, status: 'attended', attended_at: timestamp },
+        timestamp: timestamp,
+      });
+    } else if (res.status === 409 || json.status === 'already_used' || json.already_attended) {
+      // Pase ya utilizado -> Modal emergente
+      const usedGuest = json.guest || foundAny || { id: 0, name: 'Invitado Registrado', phone: '', passes: 1, table_number: 'Sin Mesa', status: 'attended' };
+      setAlreadyUsedResult({
+        guest: usedGuest,
+        timestamp: usedGuest.attended_at || timestamp,
+      });
+    } else if (res.status === 422 || json.status === 'declined') {
+      // Invitado Cancelado
+      vibrateScan('error');
+      Alert.alert(
+        '⚠️ INVITADO CANCELADO',
+        json.message || 'El invitado figura como No Asistirá.',
+        [{ text: 'Aceptar', onPress: () => setScanned(false) }]
+      );
+    } else if (res.status >= 500 || res.status === 401 || res.status === 408 || res.status === 429) {
+      // Servidor no disponible: validar con la lista guardada
+      processLocally();
+    } else {
+      // El servidor respondió que el código no es válido
+      vibrateScan('error');
+      Alert.alert(
+        'Código No Encontrado',
+        json.message || `No se encontró ningún invitado registrado con el código '${cleanToken}'.`,
+        [{ text: 'Aceptar', onPress: () => setScanned(false) }]
+      );
     }
   };
 
@@ -469,6 +515,7 @@ export default function DoorReceptionScreen() {
       Alert.alert('Nombre requerido', 'Por favor ingresá el nombre y apellido del invitado.');
       return;
     }
+    if (!selectedEventId) return;
     setSavingExpress(true);
 
     const now = new Date();
@@ -493,13 +540,14 @@ export default function DoorReceptionScreen() {
 
     setGuests((prev) => [newGuest, ...prev]);
 
+    let result: Awaited<ReturnType<typeof sendOrQueue>> | null = null;
     try {
       const autoPhone = `099${Math.floor(1000000 + Math.random() * 9000000)}`;
-      const headers = getAuthHeaders(user, { 'Content-Type': 'application/json' });
-      await fetch(`${APP_URL}/events/${selectedEventId}/guests`, {
+      result = await sendOrQueue({
+        eventId: selectedEventId,
         method: 'POST',
-        headers,
-        body: JSON.stringify({
+        path: `/events/${selectedEventId}/guests`,
+        body: {
           name: newGuest.name,
           phone: autoPhone,
           passes: newGuest.passes,
@@ -507,10 +555,10 @@ export default function DoorReceptionScreen() {
           status: newGuest.status,
           dietary_restrictions: newGuest.dietary_restrictions,
           notes: newGuest.notes,
-        }),
+        },
+        guestId: newGuest.id,
+        localGuest: { ...newGuest },
       });
-    } catch {
-      // offline fallback
     } finally {
       setSavingExpress(false);
       setExpressModalVisible(false);
@@ -520,16 +568,23 @@ export default function DoorReceptionScreen() {
       setExpressTable('');
       setExpressDiet('');
 
-      Alert.alert(
-        'Invitado Express Creado',
-        `"${addedName}" fue registrado exitosamente${expressAutoCheckIn ? ' y marcado como INGRESADO' : ''}.\n🪑 ${newGuest.table_number} · 🎟️ ${newGuest.passes} pase(s)`
-      );
+      if (result?.status === 'rejected') {
+        Alert.alert('No se pudo registrar', `El servidor rechazó el alta de "${addedName}".`);
+        fetchGuestsForEvent(selectedEventId);
+      } else {
+        // Recargar para obtener el ID real asignado por el servidor
+        if (result?.status === 'sent') fetchGuestsForEvent(selectedEventId);
+        Alert.alert(
+          'Invitado Express Creado',
+          `"${addedName}" fue registrado exitosamente${expressAutoCheckIn ? ' y marcado como INGRESADO' : ''}.\n🪑 ${newGuest.table_number} · 🎟️ ${newGuest.passes} pase(s)${result?.status === 'queued' ? '\n\n📶 Sin conexión: se enviará al servidor cuando vuelva la señal.' : ''}`
+        );
+      }
     }
   };
 
   // Reasignación de Mesa Rápida
   const handleSaveTableReassignment = async () => {
-    if (!reassignGuest) return;
+    if (!reassignGuest || !selectedEventId) return;
     const targetTable = newTableInput.trim() || 'Sin Mesa';
     setSavingTable(true);
 
@@ -537,20 +592,29 @@ export default function DoorReceptionScreen() {
       prev.map((g) => (g.id === reassignGuest.id ? { ...g, table_number: targetTable } : g))
     );
 
+    let result: Awaited<ReturnType<typeof sendOrQueue>> | null = null;
     try {
-      const headers = getAuthHeaders(user, { 'Content-Type': 'application/json' });
-      await fetch(`${APP_URL}/guests/${reassignGuest.id}`, {
+      result = await sendOrQueue({
+        eventId: selectedEventId,
         method: 'PUT',
-        headers,
-        body: JSON.stringify({ table_number: targetTable }),
+        path: `/guests/${reassignGuest.id}`,
+        body: { table_number: targetTable },
+        guestId: reassignGuest.id,
+        patch: { table_number: targetTable },
       });
-    } catch {
-      // offline fallback
     } finally {
       setSavingTable(false);
       const guestName = reassignGuest.name;
       setReassignGuest(null);
-      Alert.alert('Mesa Reasignada', `La mesa de "${guestName}" fue actualizada a: ${targetTable}`);
+      if (result?.status === 'rejected') {
+        Alert.alert('No se pudo guardar', `El servidor rechazó el cambio de mesa de "${guestName}".`);
+        fetchGuestsForEvent(selectedEventId);
+      } else {
+        Alert.alert(
+          'Mesa Reasignada',
+          `La mesa de "${guestName}" fue actualizada a: ${targetTable}${result?.status === 'queued' ? '\n\n📶 Sin conexión: se enviará al servidor cuando vuelva la señal.' : ''}`
+        );
+      }
     }
   };
 
@@ -779,6 +843,27 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={['#e11d48']} />
           }>
+
+          {/* Cambios realizados sin conexión pendientes de enviar al servidor */}
+          {pendingCountForEvent > 0 && (
+            <Pressable onPress={flush} disabled={isSyncing} style={styles.pendingSyncBox}>
+              {isSyncing ? (
+                <ActivityIndicator size="small" color="#1d4ed8" />
+              ) : (
+                <Ionicons name="cloud-upload-outline" size={22} color="#1d4ed8" />
+              )}
+              <View style={styles.readOnlyNoticeContent}>
+                <ThemedText style={styles.pendingSyncTitle}>
+                  {pendingCountForEvent} cambio(s) pendientes de sincronizar
+                </ThemedText>
+                <ThemedText style={styles.pendingSyncDesc}>
+                  {isSyncing
+                    ? 'Enviando cambios al servidor...'
+                    : 'Se enviarán automáticamente al volver la conexión. Tocá para reintentar ahora.'}
+                </ThemedText>
+              </View>
+            </Pressable>
+          )}
 
           {/* Banner Informativo si no es la fecha del evento */}
           {!isEventToday && (
@@ -1256,6 +1341,8 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
                 scanned
                   ? undefined
                   : ({ data }) => {
+                    if (scanLockRef.current) return;
+                    scanLockRef.current = true;
                     setScanned(true);
                     handleScanQR(data);
                   }
@@ -1302,7 +1389,8 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
                   <ThemedText style={styles.floatingBtnIcon}>{torchEnabled ? '🔦' : '💡'}</ThemedText>
                 </Pressable>
 
-                {/* Chips de prueba para desarrollo/web */}
+                {/* Chips de prueba: solo visibles en desarrollo, nunca en la app publicada */}
+                {__DEV__ && (
                 <View style={styles.quickScanRowInline}>
                   <Pressable
                     onPress={() => {
@@ -1329,6 +1417,7 @@ ${specialDietGuests ? `📍 *Comensales especiales que ya ingresaron:*\n${specia
                     <ThemedText style={styles.quickScanChipGlassWarningText}>No Confirmó</ThemedText>
                   </Pressable>
                 </View>
+                )}
               </View>
             </View>
           </SafeAreaView>
@@ -2024,6 +2113,27 @@ const styles = StyleSheet.create({
   readOnlyNoticeContent: {
     flex: 1,
     gap: 2,
+  },
+  pendingSyncBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#eff6ff',
+    borderColor: '#bfdbfe',
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: Spacing.four,
+    gap: 10,
+  },
+  pendingSyncTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1e40af',
+  },
+  pendingSyncDesc: {
+    fontSize: 12,
+    color: '#1e3a8a',
+    lineHeight: 16,
   },
   readOnlyNoticeTitle: {
     fontSize: 13,

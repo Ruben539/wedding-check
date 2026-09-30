@@ -195,6 +195,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = async () => {
     setIsLoading(true);
     await storage.removeItem(STORAGE_KEY);
+    // Borrar caché de eventos, invitados, cronograma y cambios pendientes del usuario
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      await AsyncStorage.multiRemove(keys.filter((k) => k.startsWith('@wedding_check_')));
+    } catch {
+      // ignore
+    }
     setUser(null);
     setIsLoading(false);
   };

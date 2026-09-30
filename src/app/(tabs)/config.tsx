@@ -20,11 +20,13 @@ import { Button } from '@/components/ui/button';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useEvent } from '@/context/event-context';
+import { useSync } from '@/context/sync-context';
 import { useTheme } from '@/hooks/use-theme';
 
 export default function ConfigScreen() {
   const { user, logout, isLoading: authLoading } = useAuth();
   const { events, selectedEvent, selectedEventId, setSelectedEventId, isLoading: loading, refreshEvents } = useEvent();
+  const { pendingOps } = useSync();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
 
@@ -209,7 +211,11 @@ export default function ConfigScreen() {
             title="🚪 CERRAR SESIÓN"
             variant="secondary"
             onPress={() => {
-              Alert.alert('Cerrar Sesión', '¿Deseas salir de la aplicación?', [
+              const pendingMsg =
+                pendingOps.length > 0
+                  ? `\n\n⚠️ Tenés ${pendingOps.length} cambio(s) sin sincronizar con el servidor. Si cerrás sesión se perderán.`
+                  : '';
+              Alert.alert('Cerrar Sesión', `¿Deseas salir de la aplicación?${pendingMsg}`, [
                 { text: 'Cancelar', style: 'cancel' },
                 { text: 'Salir', style: 'destructive', onPress: logout },
               ]);
