@@ -9,6 +9,8 @@ export interface EventItem {
   title: string;
   couple_names?: string;
   event_date?: string;
+  rsvp_deadline_days?: number;
+  rsvp_deadline_effective?: string | null; // aaaa-mm-dd, computed by the server
   location?: string;
   guest_count?: number;
   description?: string;

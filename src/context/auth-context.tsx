@@ -2,13 +2,14 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { APP_URL } from '@/env';
+import * as Device from 'expo-device';
 
 export interface User {
   id: string;
   name: string;
   email: string;
   avatar?: string;
-  role?: string;
+  role?: string; // 'admin' | 'planner' | 'hostess'
   token?: string;
 }
 
@@ -143,53 +144,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw err;
       }
       
-      // Fallback local en caso de que la API Laravel no esté corriendo localmente
-      const displayName = emailInput.split('@')[0];
-      const formattedName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
-      const mockUser: User = {
-        id: 'usr_' + Date.now(),
-        name: formattedName,
-        email: emailInput.toLowerCase(),
-        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(formattedName)}&background=e11d48&color=fff`,
-        role: 'Organizador',
-        token: 'mock_token_' + Date.now(),
-      };
-
-      await saveUserSession(mockUser);
+      // No offline / fake login: access depends on the server (deactivated users, assigned events).
+      // A user who already logged in keeps working offline with the session saved on the phone.
+      throw new Error('Sin conexión: necesitás internet para iniciar sesión.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const register = async (name: string, email: string, pass: string) => {
-    setIsLoading(true);
-    await new Promise((res) => setTimeout(res, 500));
-
-    if (!name || !email || !pass) {
-      setIsLoading(false);
-      throw new Error('Todos los campos son obligatorios.');
-    }
-
-    if (!email.includes('@')) {
-      setIsLoading(false);
-      throw new Error('Ingresa un correo electrónico válido.');
-    }
-
-    if (pass.length < 6) {
-      setIsLoading(false);
-      throw new Error('La contraseña debe tener al menos 6 caracteres.');
-    }
-
-    const newUser: User = {
-      id: 'usr_' + Date.now(),
-      name: name.trim(),
-      email: email.toLowerCase(),
-      avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=e11d48&color=fff`,
-      role: 'Organizador de Eventos',
-    };
-
-    await saveUserSession(newUser);
-    setIsLoading(false);
+  // Accounts are created from the web panel (admin → planners, planner → anfitrionas), never locally
+  const register = async (_name: string, _email: string, _pass: string) => {
+    throw new Error('Las cuentas se crean desde el panel web.');
   };
 
   const logout = async () => {
@@ -221,9 +186,13 @@ export function useAuth() {
   return context;
 }
 
+// Identifies this phone in the guest movement history ("Ingresó · App · Juan · iPhone de Puerta 1")
+const DEVICE_NAME = (Device.deviceName || Device.modelName || 'Dispositivo móvil').slice(0, 120);
+
 export function getAuthHeaders(user: User | null, extraHeaders: Record<string, string> = {}): Record<string, string> {
   const headers: Record<string, string> = {
     'Accept': 'application/json',
+    'X-Device-Name': DEVICE_NAME,
     ...extraHeaders,
   };
   if (user?.token) {

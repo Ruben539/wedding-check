@@ -1,0 +1,25 @@
+{
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_ENV": "DEV",
+        "EXPO_PUBLIC_API_URL": "http://67.205.153.141/api"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_ENV": "PRD",
+        "EXPO_PUBLIC_API_URL": "https://confirmaciones.factosystem.com.py/api"
+      }
+    },
+    "production": {
+      "env": {
+        "EXPO_PUBLIC_ENV": "PRD",
+        "EXPO_PUBLIC_API_URL": "https://confirmaciones.factosystem.com.py/api"
+      }
+    }
+  }
+}

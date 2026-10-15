@@ -6,6 +6,7 @@ import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { OfflineModal } from '@/components/offline-modal';
 import { AuthProvider } from '@/context/auth-context';
 import { EventProvider } from '@/context/event-context';
+import { GuestsProvider } from '@/context/guests-context';
 import { SyncProvider } from '@/context/sync-context';
 
 SplashScreen.preventAutoHideAsync();
@@ -16,6 +17,7 @@ export default function RootLayout() {
     <AuthProvider>
       <SyncProvider>
         <EventProvider>
+          <GuestsProvider>
           <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
             <AnimatedSplashOverlay />
             <Stack screenOptions={{ headerShown: false }}>
@@ -24,6 +26,7 @@ export default function RootLayout() {
             </Stack>
             <OfflineModal />
           </ThemeProvider>
+          </GuestsProvider>
         </EventProvider>
       </SyncProvider>
     </AuthProvider>

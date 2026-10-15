@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Network from 'expo-network';
 
 import { APP_URL } from '@/env';
+import { hasInternet } from '@/utils/network';
 import { getAuthHeaders, useAuth } from './auth-context';
 
 // Cambio realizado en la app que todavía no llegó al servidor
@@ -228,9 +229,9 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   // Sincronizar automáticamente al recuperar la conexión
   useEffect(() => {
     const subscription = Network.addNetworkStateListener((state) => {
-      if (state.isConnected && state.isInternetReachable !== false) {
-        flush();
-      }
+      hasInternet(state).then((online) => {
+        if (online) flush();
+      });
     });
     return () => subscription.remove();
   }, [flush]);

@@ -317,16 +317,15 @@ export default function TimelineScreen() {
           <View style={styles.headerTitleCol}>
             <View style={styles.eventBadgeRow}>
               <View style={styles.eventBadge}>
-                <ThemedText style={styles.eventBadgeText}>
-                  💍 {selectedEvent ? (selectedEvent.couple_names || selectedEvent.title).toUpperCase() : 'BODA'}
+                <ThemedText style={styles.eventBadgeText} numberOfLines={1}>
+                  {selectedEvent ? (selectedEvent.couple_names || selectedEvent.title).toUpperCase() : 'BODA'}
                 </ThemedText>
               </View>
 
               {!isEventToday && (
                 <View style={styles.readOnlyHeaderBadge}>
-                  <ThemedText style={styles.readOnlyHeaderBadgeText}>
-                    🔒 MODO CONSULTA
-                  </ThemedText>
+                  <Ionicons name="lock-closed" size={11} color="#b45309" />
+                  <ThemedText style={styles.readOnlyHeaderBadgeText}>MODO CONSULTA</ThemedText>
                 </View>
               )}
 
@@ -338,9 +337,15 @@ export default function TimelineScreen() {
                     <ThemedText style={styles.syncText}>Sincronizando...</ThemedText>
                   </View>
                 ) : syncStatus === 'synced' ? (
-                  <ThemedText style={styles.syncTextSuccess}>☁️ Conectado</ThemedText>
+                  <View style={styles.syncingRow}>
+                    <View style={[styles.syncDot, { backgroundColor: '#10b981' }]} />
+                    <ThemedText style={styles.syncTextSuccess}>Conectado</ThemedText>
+                  </View>
                 ) : syncStatus === 'offline' ? (
-                  <ThemedText style={styles.syncTextOffline}>📱 Modo local</ThemedText>
+                  <View style={styles.syncingRow}>
+                    <View style={[styles.syncDot, { backgroundColor: '#94a3b8' }]} />
+                    <ThemedText style={styles.syncTextOffline}>Sin conexión · datos guardados</ThemedText>
+                  </View>
                 ) : null}
               </View>
             </View>
@@ -348,16 +353,19 @@ export default function TimelineScreen() {
             <ThemedText type="subtitle" style={styles.headerTitle}>
               Timeline
             </ThemedText>
-            <ThemedText style={styles.clockText}>
-              🕐 Hora actual: <ThemedText style={{ fontWeight: '900', color: '#e11d48' }}>{currentTimeStr || '19:30'} hs</ThemedText>
-            </ThemedText>
+            <View style={styles.clockRow}>
+              <Ionicons name="time-outline" size={15} color="#64748b" />
+              <ThemedText style={styles.clockText}>
+                Hora actual <ThemedText style={styles.clockValue}>{currentTimeStr || '--:--'} hs</ThemedText>
+              </ThemedText>
+            </View>
           </View>
 
           {/* Botones de Acción Superior */}
           <View style={styles.headerButtonsRow}>
             {timeline.length > 0 && (
               <Pressable onPress={handleShareTimeline} style={styles.shareBtn}>
-                <Ionicons name="logo-whatsapp" size={16} color="#ffffff" />
+                <Ionicons name="logo-whatsapp" size={18} color="#16a34a" />
                 <ThemedText style={styles.shareBtnText}>Compartir</ThemedText>
               </Pressable>
             )}
@@ -424,19 +432,22 @@ export default function TimelineScreen() {
           {/* Tarjeta de Próximo Momento & Progreso en Vivo */}
           {timeline.length > 0 && (
             <LinearGradient
-              colors={['#FF0055', '#E61E50', '#F97316']}
+              colors={['#e11d48', '#f43f5e', '#fb923c']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.heroCard}>
               <View style={styles.heroRow}>
                 <View style={styles.heroIconBox}>
-                  <ThemedText style={styles.heroIconText}>⏱️</ThemedText>
+                  <Ionicons name={nextMilestone ? 'play' : 'checkmark-done'} size={26} color="#ffffff" />
                 </View>
                 <View style={styles.heroCol}>
-                  <ThemedText style={styles.heroSubtitle}>PRÓXIMO HITO A COORDINAR</ThemedText>
+                  <ThemedText style={styles.heroSubtitle}>{nextMilestone ? 'Próximo momento' : 'Cronograma'}</ThemedText>
                   <ThemedText style={styles.heroTitle} numberOfLines={2}>
-                    {nextMilestone ? `${nextMilestone.time} · ${nextMilestone.title}` : '🎉 ¡Todos los hitos completados!'}
+                    {nextMilestone ? nextMilestone.title : '¡Todos los momentos cumplidos!'}
                   </ThemedText>
+                  {nextMilestone ? (
+                    <ThemedText style={styles.heroTime}>{nextMilestone.time} hs</ThemedText>
+                  ) : null}
                 </View>
               </View>
 
@@ -493,10 +504,10 @@ export default function TimelineScreen() {
             <View style={styles.timelineSection}>
               <View style={styles.timelineHeaderRow}>
                 <ThemedText style={styles.sectionTitle}>
-                  HITOS PROGRAMADOS ({timeline.length})
+                  MOMENTOS ({timeline.length})
                 </ThemedText>
                 <ThemedText style={styles.sectionSub}>
-                  {isEventToday ? 'Toca para marcar cumplido' : 'Solo lectura · Día del evento'}
+                  {isEventToday ? 'Tocá para marcar como cumplido' : 'Se marca el día del evento'}
                 </ThemedText>
               </View>
 
@@ -542,6 +553,18 @@ export default function TimelineScreen() {
                         item.completed && styles.milestoneCardCompleted,
                         isNext && styles.milestoneCardNext,
                       ]}>
+                      <View
+                        style={[
+                          styles.milestoneAccent,
+                          item.completed
+                            ? { backgroundColor: '#10b981' }
+                            : isNext
+                            ? { backgroundColor: '#e11d48' }
+                            : isPast
+                            ? { backgroundColor: '#f59e0b' }
+                            : null,
+                        ]}
+                      />
                       <View style={styles.cardHeaderRow}>
                         <View style={{ flex: 1 }}>
                           <ThemedText
@@ -555,15 +578,15 @@ export default function TimelineScreen() {
 
                         {item.completed ? (
                           <View style={styles.doneBadge}>
-                            <ThemedText style={styles.doneBadgeText}>✅ CUMPLIDO</ThemedText>
+                            <ThemedText style={styles.doneBadgeText}>CUMPLIDO</ThemedText>
                           </View>
                         ) : isNext ? (
                           <View style={styles.nextBadge}>
-                            <ThemedText style={styles.nextBadgeText}>🔥 EN CURSO</ThemedText>
+                            <ThemedText style={styles.nextBadgeText}>EN CURSO</ThemedText>
                           </View>
                         ) : isPast ? (
                           <View style={styles.pastBadge}>
-                            <ThemedText style={styles.pastBadgeText}>⚠️ ATRASADO</ThemedText>
+                            <ThemedText style={styles.pastBadgeText}>ATRASADO</ThemedText>
                           </View>
                         ) : null}
                       </View>
@@ -591,9 +614,38 @@ export default function TimelineScreen() {
 }
 
 const styles = StyleSheet.create({
+  syncDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  clockRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  clockValue: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#e11d48',
+  },
+  heroTime: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginTop: 2,
+  },
+  milestoneAccent: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
+    backgroundColor: '#e2e8f0',
+  },
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#f6f7fb',
   },
   safeArea: {
     flex: 1,
@@ -609,9 +661,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.three,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
+    backgroundColor: '#f6f7fb',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -621,41 +671,42 @@ const styles = StyleSheet.create({
   headerTitleCol: {
     flex: 1,
     minWidth: 160,
-    gap: 3,
+    gap: 6,
   },
   eventBadgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    flexWrap: 'wrap',
+    gap: 6,
   },
   eventBadge: {
-    backgroundColor: '#fff1f2',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
+    backgroundColor: '#ffe4e6',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
     alignSelf: 'flex-start',
-    borderWidth: 1,
-    borderColor: '#fecdd3',
+    maxWidth: 220,
   },
   eventBadgeText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#e11d48',
-    letterSpacing: 0.8,
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#be123c',
+    letterSpacing: 0.6,
   },
   readOnlyHeaderBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: '#fef3c7',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#fde68a',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
   },
   readOnlyHeaderBadgeText: {
-    fontSize: 10,
-    fontWeight: '900',
+    fontSize: 11,
+    fontWeight: '800',
     color: '#b45309',
-    letterSpacing: 0.8,
+    letterSpacing: 0.6,
   },
   readOnlyNoticeBox: {
     flexDirection: 'row',
@@ -663,23 +714,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#fffbeb',
     borderColor: '#fde68a',
     borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
-    gap: 10,
+    borderRadius: 16,
+    padding: 14,
+    gap: 12,
   },
   readOnlyNoticeContent: {
     flex: 1,
     gap: 2,
   },
   readOnlyNoticeTitle: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '800',
     color: '#92400e',
   },
   readOnlyNoticeDesc: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#78350f',
-    lineHeight: 16,
+    lineHeight: 18,
   },
   readOnlyNoticeDate: {
     fontWeight: '800',
@@ -688,36 +739,41 @@ const styles = StyleSheet.create({
   syncBadge: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
   },
   syncingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 6,
   },
   syncText: {
-    fontSize: 10,
+    fontSize: 11,
     color: '#e11d48',
     fontWeight: '700',
   },
   syncTextSuccess: {
-    fontSize: 10,
-    color: '#10b981',
-    fontWeight: '800',
+    fontSize: 11,
+    color: '#047857',
+    fontWeight: '700',
   },
   syncTextOffline: {
-    fontSize: 10,
+    fontSize: 11,
     color: '#64748b',
     fontWeight: '700',
   },
   headerTitle: {
-    fontSize: 22,
-    fontWeight: '900',
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: '800',
     color: '#0f172a',
   },
   clockText: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#64748b',
-    fontWeight: '600',
+    fontWeight: '500',
   },
   headerButtonsRow: {
     flexDirection: 'row',
@@ -725,36 +781,42 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   shareBtn: {
-    backgroundColor: '#10b981',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
+    paddingHorizontal: 14,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
   },
   shareBtnText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '800',
+    color: '#15803d',
+    fontSize: 14,
+    fontWeight: '700',
   },
   scrollContent: {
     paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.four,
+    paddingTop: Spacing.two,
+    paddingBottom: Spacing.four,
     maxWidth: MaxContentWidth,
     width: '100%',
     alignSelf: 'center',
-    gap: Spacing.four,
+    gap: Spacing.three,
   },
 
   /* Card Ficha Informativa del Evento */
   eventInfoCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
+    borderRadius: 20,
     padding: Spacing.four,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
     gap: 8,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
   eventInfoMainRow: {
     flexDirection: 'row',
@@ -762,8 +824,8 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   eventCoupleName: {
-    fontSize: 16,
-    fontWeight: '900',
+    fontSize: 18,
+    fontWeight: '800',
     color: '#0f172a',
     marginBottom: 4,
   },
@@ -774,21 +836,22 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   infoText: {
-    fontSize: 12,
+    flexShrink: 1,
+    fontSize: 13,
     color: '#64748b',
-    fontWeight: '600',
+    fontWeight: '500',
   },
 
   /* Hero Card */
   heroCard: {
-    borderRadius: 20,
+    borderRadius: 22,
     padding: Spacing.four,
-    gap: 16,
+    gap: 18,
     shadowColor: '#e11d48',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.28,
+    shadowRadius: 16,
+    elevation: 6,
   },
   heroRow: {
     flexDirection: 'row',
@@ -796,10 +859,10 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   heroIconBox: {
-    width: 48,
-    height: 48,
+    width: 52,
+    height: 52,
     borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -811,14 +874,16 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   heroSubtitle: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#ffe4e6',
-    letterSpacing: 1,
+    fontSize: 12,
+    fontWeight: '700',
+    color: 'rgba(255, 255, 255, 0.85)',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
   },
   heroTitle: {
-    fontSize: 16,
-    fontWeight: '900',
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: '800',
     color: '#ffffff',
   },
   progressContainer: {
@@ -830,37 +895,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   progressText: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '600',
     color: '#ffffff',
   },
   progressPercent: {
-    fontSize: 12,
-    fontWeight: '900',
+    fontSize: 15,
+    fontWeight: '800',
     color: '#ffffff',
   },
   progressTrack: {
     height: 8,
-    borderRadius: 4,
+    borderRadius: 999,
     backgroundColor: 'rgba(255, 255, 255, 0.3)',
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
     backgroundColor: '#ffffff',
-    borderRadius: 4,
+    borderRadius: 999,
   },
 
   /* Estado Vacío */
   emptyStateCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 20,
+    borderRadius: 22,
     padding: Spacing.five,
     alignItems: 'center',
     gap: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    marginTop: 20,
+    marginTop: 12,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
   emptyIconCircle: {
     width: 72,
@@ -872,9 +940,10 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   emptyTitle: {
-    fontSize: 17,
-    fontWeight: '900',
+    fontSize: 18,
+    fontWeight: '800',
     color: '#0f172a',
+    textAlign: 'center',
   },
   emptySub: {
     fontSize: 13,
@@ -884,10 +953,10 @@ const styles = StyleSheet.create({
     maxWidth: 380,
   },
   emptyHint: {
-    fontSize: 11,
+    fontSize: 12,
     color: '#94a3b8',
     textAlign: 'center',
-    lineHeight: 16,
+    lineHeight: 17,
     maxWidth: 340,
     marginTop: 2,
   },
@@ -895,53 +964,53 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    backgroundColor: '#fff1f2',
-    borderWidth: 1,
-    borderColor: '#fecdd3',
+    height: 44,
+    paddingHorizontal: 18,
+    borderRadius: 14,
+    backgroundColor: '#e11d48',
     marginTop: 8,
   },
   emptyRefreshBtnText: {
-    color: '#e11d48',
-    fontWeight: '800',
-    fontSize: 13,
+    color: '#ffffff',
+    fontWeight: '700',
+    fontSize: 14,
   },
 
   /* Timeline Section */
   timelineSection: {
-    gap: 14,
+    gap: 12,
   },
   timelineHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginTop: Spacing.one,
+    marginBottom: 2,
   },
   sectionTitle: {
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '800',
     color: '#64748b',
     letterSpacing: 1,
   },
   sectionSub: {
-    fontSize: 11,
+    fontSize: 12,
     color: '#94a3b8',
-    fontWeight: '600',
+    fontWeight: '500',
   },
   timelineRow: {
     flexDirection: 'row',
     gap: 12,
   },
   timeCol: {
-    width: 55,
+    width: 56,
     alignItems: 'center',
   },
   timeText: {
-    fontSize: 13,
-    fontWeight: '900',
+    fontSize: 15,
+    fontWeight: '800',
     color: '#0f172a',
-    marginBottom: 6,
+    marginBottom: 8,
   },
   timeTextCompleted: {
     color: '#94a3b8',
@@ -953,60 +1022,60 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   statusDot: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 2,
-    borderWidth: 2,
+    borderWidth: 3,
+    borderColor: '#f6f7fb',
   },
   statusDotCompleted: {
     backgroundColor: '#10b981',
-    borderColor: '#059669',
   },
   statusDotNext: {
     backgroundColor: '#e11d48',
-    borderColor: '#be123c',
   },
   statusDotPast: {
-    backgroundColor: '#f59e0b',
-    borderColor: '#d97706',
+    backgroundColor: '#fef3c7',
   },
   statusDotPending: {
-    backgroundColor: '#f1f5f9',
-    borderColor: '#cbd5e1',
+    backgroundColor: '#e9ecf2',
   },
   verticalConnector: {
     position: 'absolute',
-    top: 28,
-    bottom: -10,
+    top: 30,
+    bottom: -12,
     width: 2,
     backgroundColor: '#e2e8f0',
   },
   milestoneCard: {
     flex: 1,
+    position: 'relative',
+    overflow: 'hidden',
     backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: Spacing.three,
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingLeft: 18,
+    paddingRight: 14,
     gap: 6,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    shadowColor: '#000',
+    shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
     elevation: 2,
   },
   milestoneCardCompleted: {
-    backgroundColor: '#f8fafc',
-    opacity: 0.75,
-    borderColor: '#f1f5f9',
+    backgroundColor: '#fbfcfd',
+    opacity: 0.8,
   },
   milestoneCardNext: {
-    borderColor: '#e11d48',
-    borderWidth: 1.5,
-    backgroundColor: '#fff1f2',
+    backgroundColor: '#fff5f6',
+    shadowColor: '#e11d48',
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 4,
   },
   cardHeaderRow: {
     flexDirection: 'row',
@@ -1015,8 +1084,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   milestoneTitle: {
-    fontSize: 15,
-    fontWeight: '800',
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '700',
     color: '#0f172a',
   },
   milestoneTitleCompleted: {
@@ -1027,39 +1097,42 @@ const styles = StyleSheet.create({
     backgroundColor: '#dcfce7',
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 8,
+    borderRadius: 999,
   },
   doneBadgeText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#16a34a',
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#15803d',
+    letterSpacing: 0.3,
   },
   nextBadge: {
-    backgroundColor: '#ffe4e6',
+    backgroundColor: '#e11d48',
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 8,
+    borderRadius: 999,
   },
   nextBadgeText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#e11d48',
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#ffffff',
+    letterSpacing: 0.3,
   },
   pastBadge: {
     backgroundColor: '#fef3c7',
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 8,
+    borderRadius: 999,
   },
   pastBadgeText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#d97706',
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#b45309',
+    letterSpacing: 0.3,
   },
   milestoneNotes: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#64748b',
-    lineHeight: 17,
+    lineHeight: 19,
   },
   milestoneNotesCompleted: {
     color: '#94a3b8',

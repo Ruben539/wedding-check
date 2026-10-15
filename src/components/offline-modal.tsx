@@ -5,9 +5,7 @@ import * as Network from 'expo-network';
 import { Ionicons } from '@expo/vector-icons';
 
 import { ThemedText } from '@/components/themed-text';
-
-const isOffline = (state: Network.NetworkState) =>
-  state.isConnected === false || state.isInternetReachable === false;
+import { hasInternet } from '@/utils/network';
 
 // Modal que avisa al usuario cuando no hay conexión a internet.
 // Se verifica cada vez que se ingresa a una pantalla y cuando cambia el estado de la red.
@@ -19,13 +17,9 @@ export function OfflineModal() {
   // Verificar conexión al ingresar a cada pantalla
   useEffect(() => {
     let active = true;
-    Network.getNetworkStateAsync()
-      .then((state) => {
-        if (active && isOffline(state)) setVisible(true);
-      })
-      .catch(() => {
-        // ignore
-      });
+    hasInternet().then((online) => {
+      if (active && !online) setVisible(true);
+    });
     return () => {
       active = false;
     };
@@ -34,7 +28,7 @@ export function OfflineModal() {
   // Mostrar si se pierde la conexión y cerrar automáticamente al recuperarla
   useEffect(() => {
     const subscription = Network.addNetworkStateListener((state) => {
-      setVisible(isOffline(state));
+      hasInternet(state).then((online) => setVisible(!online));
     });
     return () => subscription.remove();
   }, []);
@@ -42,8 +36,7 @@ export function OfflineModal() {
   const handleRetry = async () => {
     setChecking(true);
     try {
-      const state = await Network.getNetworkStateAsync();
-      setVisible(isOffline(state));
+      setVisible(!(await hasInternet()));
     } catch {
       // ignore
     } finally {

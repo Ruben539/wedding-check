@@ -5,8 +5,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
+import { useAuth } from '@/context/auth-context';
+
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  // Anfitriona: only door reception and event info (the server enforces it too)
+  const isHostess = user?.role === 'hostess';
 
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 12 : 20);
   const tabBarHeight = 62 + bottomInset;
@@ -63,6 +68,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="cronograma"
         options={{
+          href: isHostess ? null : undefined,
           title: 'Timeline',
           tabBarIcon: ({ focused, color }) => (
             <Ionicons name={focused ? 'timer' : 'timer-outline'} size={24} color={color} />
@@ -72,6 +78,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="invitados"
         options={{
+          href: isHostess ? null : undefined,
           title: 'Invitados',
           tabBarIcon: ({ focused, color }) => (
             <Ionicons name={focused ? 'people' : 'people-outline'} size={24} color={color} />

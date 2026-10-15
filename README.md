@@ -1,56 +1,29 @@
-# Welcome to your Expo app 👋
+# Wedding Check
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+App móvil (Expo / React Native) del sistema de confirmaciones: gestión de invitados y RSVP antes del
+evento, acreditación en la puerta el día del evento y seguimiento del timeline.
 
-## Get started
+## Pantallas (`src/app/(tabs)`)
+- **Recepción** (`index.tsx`): escaneo de QR, ingreso manual, alta express, mesas y reporte de catering.
+  Sus piezas viven en `src/features/reception` (tarjeta de invitado, resumen, vista por mesa, estilos).
+- **Invitados** (`invitados.tsx`): estado RSVP, recordatorios y reenvío de QR por el WhatsApp del sistema.
+- **Timeline** (`cronograma.tsx`): momentos del evento y su avance.
+- **Info Boda** (`config.tsx`): selección del evento.
 
-1. Install dependencies
+## Datos
+- `context/guests-context.tsx`: lista de invitados compartida por todas las pantallas. Se actualiza sola
+  cada 20 s mientras Recepción está abierta, para que varias puertas vean los ingresos de las demás.
+- `context/sync-context.tsx`: cola de cambios hechos sin conexión, que se envían al volver la señal.
+- Cada petición manda `X-Device-Name`: el historial de cada invitado muestra desde qué celular se hizo cada movimiento.
 
-   ```bash
-   npm install
-   ```
+## Configuración por ambiente
+Se define con variables `EXPO_PUBLIC_*`, nunca editando `src/env.ts`:
+- Local: copiar `.env.example` como `.env`.
+- Builds: perfiles `development`, `preview` y `production` de `eas.json`.
 
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
+## Comandos
 ```bash
-npm run reset-project
+npx expo start      # desarrollo
+npx tsc --noEmit    # tipos
+npx expo lint       # lint
 ```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-### Other setup steps
-
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
